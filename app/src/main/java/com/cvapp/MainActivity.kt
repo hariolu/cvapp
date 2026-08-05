@@ -93,6 +93,15 @@ class MainActivity : AppCompatActivity() {
         private const val KEY_LAST_UPDATE_CHECK  = "last_update_check"
         private const val KEY_LINK_HINT_DISMISSED = "link_hint_dismissed"
 
+        // An update we have already been told about. Kept on disk so it survives
+        // the process, because the moment it is most needed is after the user has
+        // been sent out to Settings and comes back. See offerPendingUpdate().
+        private const val KEY_PENDING_VERSION = "pending_update_version"
+        private const val KEY_PENDING_NOTES   = "pending_update_notes"
+        private const val KEY_PENDING_URL     = "pending_update_url"
+        private const val KEY_PENDING_NAME    = "pending_update_name"
+        private const val KEY_PENDING_SIZE    = "pending_update_size"
+
         /** Let the loading animation play before a dialog lands on top of it. */
         private const val LINK_HINT_DELAY_MS = 1_400L
 
@@ -213,12 +222,17 @@ class MainActivity : AppCompatActivity() {
         if (!launchedForSettings) pendingDeepLinkPath = deepLinkPathOrWarn(intent?.data)
         resolveInitialTarget()
 
-        // Both of these wait out the loading animation rather than landing on top
-        // of it, and only one of them can be what the user asked for.
-        mainHandler.postDelayed(
-            { if (launchedForSettings) showAppSettings() else maybeShowLinkHint() },
-            LINK_HINT_DELAY_MS
-        )
+        // These wait out the loading animation rather than landing on top of it,
+        // and only one of them can be what this launch is about. An update we
+        // already know of outranks the link hint: the hint can wait for the next
+        // launch, an update the user has already been offered cannot keep vanishing.
+        mainHandler.postDelayed({
+            when {
+                launchedForSettings   -> showAppSettings()
+                offerPendingUpdate()  -> Unit
+                else                  -> maybeShowLinkHint()
+            }
+        }, LINK_HINT_DELAY_MS)
     }
 
     // singleTask: a link tapped while we're already running arrives here rather
@@ -238,6 +252,7 @@ class MainActivity : AppCompatActivity() {
         // activity, with our dialog still open behind it. Re-read on the way back
         // so it never shows a state that stopped being true.
         refreshSettings?.invoke()
+        resumeUpdateAfterPermission()
     }
 
     override fun onStart() {
@@ -850,6 +865,80 @@ class MainActivity : AppCompatActivity() {
     private var updateJob: Job? = null
     private var updateDialog: AlertDialog? = null
 
+    /** Set while the user is out in Settings granting "install unknown apps". */
+    private var awaitingInstallPermission = false
+
+    // ── Remembering an update we have already found ──────────────────────────
+    // The six-hour interval exists to be polite to GitHub's API. It must not also
+    // decide whether the user gets *told*, and it used to: the only route to the
+    // prompt was a fresh network check, so an update that was offered and not
+    // installed went quiet for the rest of the day — including across restarts.
+    // Writing it down separates the two: the network is asked rarely, the user is
+    // reminded on every launch until the update is actually installed.
+
+    private fun rememberPending(release: Updater.Release) {
+        prefs.edit()
+            .putString(KEY_PENDING_VERSION, release.versionName)
+            .putString(KEY_PENDING_NOTES, release.notes)
+            .putString(KEY_PENDING_URL, release.apkUrl)
+            .putString(KEY_PENDING_NAME, release.apkName)
+            .putLong(KEY_PENDING_SIZE, release.sizeBytes)
+            .apply()
+    }
+
+    private fun forgetPending() {
+        prefs.edit()
+            .remove(KEY_PENDING_VERSION)
+            .remove(KEY_PENDING_NOTES)
+            .remove(KEY_PENDING_URL)
+            .remove(KEY_PENDING_NAME)
+            .remove(KEY_PENDING_SIZE)
+            .apply()
+    }
+
+    /** The update already found, if it is still newer than what is installed. */
+    private fun pendingRelease(): Updater.Release? {
+        val version = prefs.getString(KEY_PENDING_VERSION, null) ?: return null
+        val url     = prefs.getString(KEY_PENDING_URL, null) ?: return null
+        val name    = prefs.getString(KEY_PENDING_NAME, null) ?: return null
+
+        val release = Updater.Release(
+            versionName = version,
+            notes       = prefs.getString(KEY_PENDING_NOTES, "").orEmpty(),
+            apkUrl      = url,
+            apkName     = name,
+            sizeBytes   = prefs.getLong(KEY_PENDING_SIZE, 0L)
+        )
+        // The install may have gone through since it was written — including by
+        // hand, from a file the user downloaded themselves.
+        if (!Updater.isNewerThanInstalled(release)) { forgetPending(); return null }
+        return release
+    }
+
+    /** Re-offers a known update without touching the network. True if it prompted. */
+    private fun offerPendingUpdate(): Boolean {
+        if (isFinishing || isDestroyed) return false
+        val release = pendingRelease() ?: return false
+        promptUpdate(release)
+        return true
+    }
+
+    /**
+     * The user tapped Update, Android sent them out to grant "install unknown
+     * apps", and they came back. This is where the update used to die quietly:
+     * beginUpdate had already returned, the release it was holding was gone, and
+     * the check throttle meant even restarting the app said nothing for hours.
+     * Granting the permission now leads straight into the download it was for.
+     */
+    private fun resumeUpdateAfterPermission() {
+        if (!awaitingInstallPermission) return
+        if (!Updater.canInstallPackages(this)) return
+        awaitingInstallPermission = false
+        val release = pendingRelease() ?: return
+        updateDialog?.takeIf { it.isShowing }?.dismiss()
+        beginUpdate(release)
+    }
+
     private fun checkForUpdate(force: Boolean) {
         if (updateJob?.isActive == true) return
 
@@ -867,12 +956,17 @@ class MainActivity : AppCompatActivity() {
 
             if (isFinishing || isDestroyed) return@launch
             when {
+                // Unreachable: keep whatever we already knew rather than forgetting it.
                 release == null ->
                     if (force) toast(getString(R.string.update_check_failed))
-                Updater.isNewerThanInstalled(release) ->
+                Updater.isNewerThanInstalled(release) -> {
+                    rememberPending(release)
                     promptUpdate(release)
-                force ->
-                    toast(getString(R.string.update_up_to_date, BuildConfig.VERSION_NAME))
+                }
+                else -> {
+                    forgetPending()
+                    if (force) toast(getString(R.string.update_up_to_date, BuildConfig.VERSION_NAME))
+                }
             }
         }
     }
@@ -897,7 +991,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun beginUpdate(release: Updater.Release) {
-        if (!Updater.canInstallPackages(this)) { promptInstallPermission(); return }
+        if (!Updater.canInstallPackages(this)) {
+            // Written down before we send them away, so that coming back with the
+            // permission granted has something to carry on with.
+            rememberPending(release)
+            awaitingInstallPermission = true
+            promptInstallPermission()
+            return
+        }
+        awaitingInstallPermission = false
 
         val view     = layoutInflater.inflate(R.layout.dialog_update_progress, null)
         val progress = view.findViewById<ProgressBar>(R.id.updateProgressBar)
@@ -938,7 +1040,12 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton(R.string.update_open_settings) { _, _ ->
                 runCatching { startActivity(Updater.unknownSourcesSettingsIntent(this)) }
             }
-            .setNegativeButton(R.string.update_action_later, null)
+            // Backing out here ends this attempt, so a grant made later for some
+            // unrelated reason doesn't start a download nobody asked for. The
+            // update itself stays remembered and is offered again next launch.
+            .setNegativeButton(R.string.update_action_later) { _, _ ->
+                awaitingInstallPermission = false
+            }
             .show()
     }
 

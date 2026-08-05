@@ -161,6 +161,27 @@ Unauthenticated GitHub API allows 60 requests per hour per IP; the 6-hour
 throttle keeps this nowhere near it. The timestamp is written even when a check
 fails, so a phone with no route to GitHub doesn't retry on every single start.
 
+**The throttle governs the network, not the user.** A release that was found and
+not installed is written to preferences and re-offered on every launch until it
+is gone, with no further network call. This is not a nicety — without it the app
+loses updates in a way nobody can see:
+
+> 1.12 was offered, the user tapped Update, Android asked for "install unknown
+> apps" — and that was the end of it. Granting the permission led nowhere,
+> because `beginUpdate` had already returned and the release it was holding was
+> gone. Restarting did nothing either: the check had been stamped the moment the
+> answer arrived, so every start for the next six hours returned early without a
+> word. The update was installed by hand from a browser download in the end.
+
+So: the found release is remembered before the user is sent to Settings, and
+coming back with the permission granted resumes the download it was for. Backing
+out of the permission prompt ends that attempt but keeps the record, so the next
+launch offers it again.
+
+The record is dropped as soon as the installed version catches up — including
+when the APK was installed by hand, since the comparison is against
+`BuildConfig.VERSION_NAME` rather than against anything we wrote down.
+
 The download goes to app-private storage and is handed to the system installer
 through a `FileProvider`. Android then enforces the real security boundary: an
 APK signed with a different key **cannot** install over the existing app. This
