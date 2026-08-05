@@ -59,6 +59,23 @@ crashes are absorbed into the loading screen, which keeps retrying quietly
 instead of dropping you on an error page. The page you were reading is
 remembered and restored.
 
+**Can be the home screen.** Turn it on and the Home button opens your dashboard
+instead of a grid of icons — the point of an old phone or a tablet on the wall.
+It is off until you ask for it: until then CVapp is not even listed among the
+home apps, so it cannot replace your launcher by accident. Android still decides
+who holds the role, and hands it back the moment you pick something else in
+Settings → Apps → Default apps → Home app.
+
+Back behaves the way it does in a browser: it walks back through dashboards,
+panels and open dialogs, one step at a time.
+
+## App settings
+
+Home-screen mode, link handling and the update check live in one dialog.
+**Long-press the loading screen** to open it. If the app is already connected,
+`cvha://app-settings` opens it from anywhere — a dashboard button, a home-screen
+shortcut, or `adb`.
+
 ## Install
 
 Download the latest `.apk` from [Releases](../../releases) and open it.

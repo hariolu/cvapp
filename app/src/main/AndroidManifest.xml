@@ -74,6 +74,30 @@
             </intent-filter>
         </activity>
 
+        <!-- Home-screen mode: CVapp standing in for the launcher, so the device
+             boots straight into the dashboard.
+
+             An alias rather than another filter on MainActivity, and shipped
+             android:enabled="false", because a HOME filter is visible to the
+             whole system the moment it exists — every install would show up in
+             Settings → Home app, where one stray tap replaces the user's
+             launcher. LauncherMode enables this only when asked, and the
+             package manager remembers that across updates.
+
+             No LAUNCHER category here: MainActivity already has one, and a
+             second would put a duplicate icon in the app drawer. -->
+        <activity-alias
+            android:name=".HomeActivity"
+            android:targetActivity=".MainActivity"
+            android:enabled="false"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity-alias>
+
         <!-- Hands the downloaded APK to the system installer. Not exported: only
              this app may query it, and the installer gets in on a per-Intent
              read grant that expires with the Intent. -->

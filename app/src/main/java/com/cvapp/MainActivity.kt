@@ -27,6 +27,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.widget.SwitchCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import kotlinx.coroutines.CoroutineScope
@@ -94,6 +95,16 @@ class MainActivity : AppCompatActivity() {
 
         /** Let the loading animation play before a dialog lands on top of it. */
         private const val LINK_HINT_DELAY_MS = 1_400L
+
+        /**
+         * cvha://app-settings — opens the app's own settings.
+         *
+         * The loading screen is the normal way in (long-press it), but it is only
+         * on screen while the app is connecting, and in home-screen mode the app
+         * can stay resident for days without ever showing it again. This link
+         * always works: from a dashboard button, a home-screen shortcut, or adb.
+         */
+        private const val LINK_APP_SETTINGS = "app-settings"
     }
 
     // Entry point for remote — OTP portal that redirects to this build's HA host.
@@ -129,6 +140,9 @@ class MainActivity : AppCompatActivity() {
         // JS interface methods arrive on a WebView background thread; everything
         // downstream of here touches dialogs, so hop to main first.
         @JavascriptInterface fun checkForUpdate() = mainHandler.post { checkForUpdate(force = true) }
+
+        /** Home-screen mode, link handling and the update check, from the panel. */
+        @JavascriptInterface fun openAppSettings() = mainHandler.post { showAppSettings() }
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -174,6 +188,15 @@ class MainActivity : AppCompatActivity() {
         // covers the normal case, and the panel can call CVAppBridge.checkForUpdate().
         loadingVersion.setOnClickListener { checkForUpdate(force = true) }
 
+        // Long-press the loading screen for the app's own settings. The app has no
+        // chrome of its own by design — every pixel after the connection lands
+        // belongs to Home Assistant — so this screen is where its controls live.
+        // Registered on the version label too: it is clickable, so it would
+        // otherwise swallow the press over its own corner.
+        val openSettings = View.OnLongClickListener { showAppSettings(); true }
+        loadingView.setOnLongClickListener(openSettings)
+        loadingVersion.setOnLongClickListener(openSettings)
+
         networkMonitor = NetworkMonitor(this) { onNetworkSignal() }
 
         setupWebView()
@@ -185,18 +208,36 @@ class MainActivity : AppCompatActivity() {
             checkAvailabilityAndActOn(forceReload = true)
         }
         animateLoadingIn()
-        pendingDeepLinkPath = deepLinkPathOrWarn(intent?.data)
+
+        val launchedForSettings = isAppSettingsLink(intent?.data)
+        if (!launchedForSettings) pendingDeepLinkPath = deepLinkPathOrWarn(intent?.data)
         resolveInitialTarget()
 
-        mainHandler.postDelayed({ maybeShowLinkHint() }, LINK_HINT_DELAY_MS)
+        // Both of these wait out the loading animation rather than landing on top
+        // of it, and only one of them can be what the user asked for.
+        mainHandler.postDelayed(
+            { if (launchedForSettings) showAppSettings() else maybeShowLinkHint() },
+            LINK_HINT_DELAY_MS
+        )
     }
 
     // singleTask: a link tapped while we're already running arrives here rather
     // than through a fresh onCreate, so the live WebView gets to handle it.
+    // In home-screen mode the Home button lands here too — action MAIN with no
+    // data, which every branch below correctly treats as "nothing was asked for".
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        if (isAppSettingsLink(intent.data)) { showAppSettings(); return }
         deepLinkPathOrWarn(intent.data)?.let { applyDeepLink(it) }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Home-app and link approvals are changed in Settings, i.e. in another
+        // activity, with our dialog still open behind it. Re-read on the way back
+        // so it never shows a state that stopped being true.
+        refreshSettings?.invoke()
     }
 
     override fun onStart() {
@@ -210,6 +251,26 @@ class MainActivity : AppCompatActivity() {
         super.onStop()
         networkMonitor.stop()
         mainHandler.removeCallbacks(recheckRunnable)
+        retireDuplicateOfHomeTask()
+    }
+
+    /**
+     * Android runs the home app in a task of its own, which an already-running
+     * ordinary task cannot be merged into. So switching home mode on while the
+     * app is open and then pressing Home leaves the old instance behind — two
+     * live activities, two WebViews, two Home Assistant sessions. Measured on
+     * device, not a worry: singleTask cannot prevent it, because the two tasks
+     * are different kinds of task.
+     *
+     * Nothing else duplicates. The launcher icon and cvha:// links both reach the
+     * home-task instance through onNewIntent once it exists. So this one leftover
+     * retires as soon as it is off screen, and the survivor picks the user's page
+     * back up from KEY_LAST_PATH.
+     */
+    private fun retireDuplicateOfHomeTask() {
+        if (isFinishing || isChangingConfigurations) return
+        if (LauncherMode.isHomeInstance(this)) return
+        if (LauncherMode.isCurrentHome(this)) finish()
     }
 
     override fun onDestroy() {
@@ -220,6 +281,9 @@ class MainActivity : AppCompatActivity() {
         updateDialog = null
         linkHintDialog?.takeIf { it.isShowing }?.dismiss()
         linkHintDialog = null
+        settingsDialog?.takeIf { it.isShowing }?.dismiss()
+        settingsDialog = null
+        refreshSettings = null
         activityScope.cancel()
     }
 
@@ -275,7 +339,8 @@ class MainActivity : AppCompatActivity() {
                 // dashboard buttons). Handle it here — openExternal would bounce it
                 // through the system and land right back in this activity.
                 if (scheme.equals(BuildConfig.LINK_SCHEME, ignoreCase = true)) {
-                    deepLinkPathOrWarn(req.url)?.let { applyDeepLink(it) }
+                    if (isAppSettingsLink(req.url)) showAppSettings()
+                    else deepLinkPathOrWarn(req.url)?.let { applyDeepLink(it) }
                     return true
                 }
                 if (scheme !in listOf("http", "https")) { openExternal(url); return true }
@@ -418,6 +483,19 @@ class MainActivity : AppCompatActivity() {
         }
         return sanitizePath(raw)
     }
+
+    /**
+     * cvha://app-settings — a command, not a destination.
+     *
+     * Checked before any path parsing, or it would be read as a request to open
+     * "/app-settings" on the instance, which is not a page that exists. Only our
+     * own scheme qualifies: an https link is somebody else's to send, and no
+     * website gets to open this app's settings.
+     */
+    private fun isAppSettingsLink(uri: Uri?): Boolean =
+        uri != null &&
+            uri.scheme.equals(BuildConfig.LINK_SCHEME, ignoreCase = true) &&
+            uri.authority.equals(LINK_APP_SETTINGS, ignoreCase = true)
 
     /**
      * Anything that isn't an unambiguous same-origin path is dropped. "//evil.tld/x"
@@ -617,23 +695,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle(R.string.link_hint_title)
             .setMessage(getString(R.string.link_hint_body, host))
             .setView(view)
-            .setPositiveButton(R.string.link_hint_open_settings) { _, _ ->
-                runCatching {
-                    startActivity(
-                        Intent(Settings.ACTION_APP_OPEN_BY_DEFAULT_SETTINGS)
-                            .setData(Uri.parse("package:$packageName"))
-                    )
-                }.onFailure {
-                    // Some OEM builds don't expose the per-app screen; the app
-                    // details page always exists and is one tap away from it.
-                    runCatching {
-                        startActivity(
-                            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-                                .setData(Uri.parse("package:$packageName"))
-                        )
-                    }
-                }
-            }
+            .setPositiveButton(R.string.link_hint_open_settings) { _, _ -> openLinkSettings() }
             .setNegativeButton(R.string.link_hint_later, null)
             .setOnDismissListener {
                 // Read on dismiss, not per-button: the choice should stick whether
@@ -674,6 +736,110 @@ class MainActivity : AppCompatActivity() {
             it == DomainVerificationUserState.DOMAIN_STATE_SELECTED ||
                 it == DomainVerificationUserState.DOMAIN_STATE_VERIFIED
         }
+    }
+
+    /** Android's "Open by default" screen for this app. */
+    private fun openLinkSettings() {
+        runCatching {
+            startActivity(
+                Intent(Settings.ACTION_APP_OPEN_BY_DEFAULT_SETTINGS)
+                    .setData(Uri.parse("package:$packageName"))
+            )
+        }.onFailure {
+            // Some OEM builds don't expose the per-app screen; the app details
+            // page always exists and is one tap away from it.
+            runCatching {
+                startActivity(
+                    Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                        .setData(Uri.parse("package:$packageName"))
+                )
+            }
+        }
+    }
+
+    // ── App settings ──────────────────────────────────────────────────────────
+    // The app deliberately has no chrome: once connected, the screen belongs to
+    // Home Assistant. So its own controls live in one dialog, reached by
+    // long-pressing the loading screen, by cvha://app-settings, or from the panel
+    // through CVAppBridge.openAppSettings().
+
+    private var settingsDialog: AlertDialog? = null
+    private var refreshSettings: (() -> Unit)? = null
+
+    private fun showAppSettings() {
+        if (isFinishing || isDestroyed) return
+        if (settingsDialog?.isShowing == true) return
+
+        val view         = layoutInflater.inflate(R.layout.dialog_app_settings, null)
+        val homeRow      = view.findViewById<View>(R.id.settingsHomeRow)
+        val homeSwitch   = view.findViewById<SwitchCompat>(R.id.settingsHomeSwitch)
+        val homeSubtitle = view.findViewById<TextView>(R.id.settingsHomeSubtitle)
+        val linksRow     = view.findViewById<View>(R.id.settingsLinksRow)
+        val updateRow    = view.findViewById<View>(R.id.settingsUpdateRow)
+
+        view.findViewById<TextView>(R.id.settingsUpdateSubtitle).text =
+            getString(R.string.settings_update_subtitle, BuildConfig.VERSION_NAME)
+
+        val refresh = {
+            val offered = LauncherMode.isOffered(this)
+            val active  = LauncherMode.isCurrentHome(this)
+            homeSubtitle.setText(
+                when {
+                    active  -> R.string.settings_home_state_active
+                    offered -> R.string.settings_home_state_offered
+                    else    -> R.string.settings_home_state_off
+                }
+            )
+            // Detached first: assigning isChecked fires the listener, which would
+            // turn a read of the current state into a write of it.
+            homeSwitch.setOnCheckedChangeListener(null)
+            homeSwitch.isChecked = offered
+            homeSwitch.setOnCheckedChangeListener { _, checked -> setHomeAppOffered(checked) }
+        }
+        refresh()
+        refreshSettings = refresh
+
+        // Tapping the row rather than the switch reopens the picker. That is the
+        // step between "CVapp can be a home app" and "CVapp is the home app" —
+        // only the user makes that choice, and Android will not ask on our behalf.
+        homeRow.setOnClickListener {
+            if (LauncherMode.isOffered(this)) openHomePicker() else homeSwitch.isChecked = true
+        }
+        linksRow.setOnClickListener { openLinkSettings() }
+        updateRow.setOnClickListener {
+            settingsDialog?.dismiss()      // the update prompt takes it from here
+            checkForUpdate(force = true)
+        }
+
+        settingsDialog = AlertDialog.Builder(this)
+            .setTitle(R.string.settings_title)
+            .setView(view)
+            .setNegativeButton(R.string.settings_close, null)
+            .setOnDismissListener { refreshSettings = null }
+            .show()
+    }
+
+    private fun setHomeAppOffered(offered: Boolean) {
+        if (offered) {
+            LauncherMode.setOffered(this, true)
+            // Being listed is not being chosen; go straight to where that happens.
+            openHomePicker()
+            return
+        }
+
+        // Switching off while we *are* the home screen ends the home task under our
+        // own feet, and Android raises its own "Select a Home app" sheet on the
+        // spot — measured, and the right question at the right moment, so there is
+        // nothing here to add to it. The toast is what it would otherwise be
+        // missing: why the phone is suddenly asking.
+        toast(getString(R.string.settings_home_removed))
+        LauncherMode.setOffered(this, false)
+        refreshSettings?.invoke()
+    }
+
+    private fun openHomePicker() {
+        runCatching { startActivity(LauncherMode.pickerIntent()) }
+            .onFailure { toast(getString(R.string.settings_home_no_picker)) }
     }
 
     // ── Self-update ───────────────────────────────────────────────────────────
@@ -922,6 +1088,13 @@ class MainActivity : AppCompatActivity() {
 
     @Deprecated("Deprecated in API 33")
     override fun onBackPressed() {
-        if (webView.canGoBack()) webView.goBack() else super.onBackPressed()
+        when {
+            webView.canGoBack() -> webView.goBack()
+            // As the home screen there is nothing behind us. Finishing would just
+            // make Android relaunch the home app — this one — from cold, so Back
+            // at the root is swallowed here exactly as a launcher swallows it.
+            LauncherMode.isCurrentHome(this) -> Unit
+            else -> super.onBackPressed()
+        }
     }
 }

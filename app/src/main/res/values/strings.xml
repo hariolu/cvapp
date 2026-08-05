@@ -10,6 +10,24 @@
     <string name="link_hint_open_settings">Open settings</string>
     <string name="link_hint_later">Not now</string>
 
+    <!-- App settings — long-press the loading screen, or cvha://app-settings -->
+    <string name="settings_title">App settings</string>
+    <string name="settings_close">Close</string>
+
+    <string name="settings_home_title">Home screen</string>
+    <string name="settings_home_state_active">CVapp is your home screen</string>
+    <string name="settings_home_state_offered">Ready — tap here to pick CVapp as your home app</string>
+    <string name="settings_home_state_off">Open your dashboard instead of the home screen</string>
+    <string name="settings_home_note">Android decides which app is the home screen. You can hand it back to your launcher whenever you like, in Settings → Apps → Default apps → Home app.</string>
+    <string name="settings_home_removed">CVapp is no longer offered as a home app</string>
+    <string name="settings_home_no_picker">This device has no home app settings screen</string>
+
+    <string name="settings_links_title">Links to open in this app</string>
+    <string name="settings_links_subtitle">Choose which Coyotes Vision links come here instead of the browser</string>
+
+    <string name="settings_update_title">Check for updates</string>
+    <string name="settings_update_subtitle">Version %1$s</string>
+
     <!-- Self-update -->
     <string name="update_available_title">CVapp %1$s is available</string>
     <string name="update_available_body">You have %1$s.</string>
