@@ -3,6 +3,7 @@ package com.cvapp
 import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
 import android.annotation.SuppressLint
+import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.verify.domain.DomainVerificationManager
@@ -160,6 +161,10 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        // First thing, before a second WebView gets built on top of the one that
+        // is already out there. This is the instance Android keeps.
+        removeOtherAppTasks()
+
         // Edge-to-edge is mandatory from targetSdk 35, which means the window is
         // no longer resized when the keyboard opens — the IME arrives as an inset
         // and padding for it is this listener's job. Reading only systemBars()
@@ -260,32 +265,54 @@ class MainActivity : AppCompatActivity() {
         networkMonitor.start()
         mainHandler.postDelayed(recheckRunnable, RECHECK_INTERVAL_MS)
         checkForUpdate(force = false)
+        // Again on every foreground, not only at creation: a stray task can also
+        // appear after the home instance exists, and coming to the front is the
+        // natural moment to be sure this is the only one.
+        removeOtherAppTasks()
     }
 
     override fun onStop() {
         super.onStop()
         networkMonitor.stop()
         mainHandler.removeCallbacks(recheckRunnable)
-        retireDuplicateOfHomeTask()
     }
 
     /**
-     * Android runs the home app in a task of its own, which an already-running
-     * ordinary task cannot be merged into. So switching home mode on while the
-     * app is open and then pressing Home leaves the old instance behind — two
-     * live activities, two WebViews, two Home Assistant sessions. Measured on
-     * device, not a worry: singleTask cannot prevent it, because the two tasks
-     * are different kinds of task.
+     * Removes every other task belonging to this app.
      *
-     * Nothing else duplicates. The launcher icon and cvha:// links both reach the
-     * home-task instance through onNewIntent once it exists. So this one leftover
-     * retires as soon as it is off screen, and the survivor picks the user's page
-     * back up from KEY_LAST_PATH.
+     * Android runs the home app in a task of its own, and a task that is already
+     * running cannot be merged into it — `singleTask` is powerless here, because
+     * the two are different kinds of task. Switching home mode on while the app
+     * is open therefore produces two live activities, two WebViews and two Home
+     * Assistant sessions.
+     *
+     * The clean-up has to reach across tasks, and it has to be the home instance
+     * that performs it. Letting the leftover retire itself in onStop does not
+     * work, and that was measured rather than reasoned: the home-app picker opens
+     * *inside* the running task, so the old activity stops while CVapp is still
+     * not the home app. Choose CVapp there, press Home without returning to the
+     * app first, and onStop never runs again — it fires on the way into the
+     * stopped state, not on anything that happens afterwards. The task then sits
+     * there indefinitely.
+     *
+     * The survivor is the instance Android intends to keep, it is created at
+     * exactly the moment the duplicate appears, and it restores the user's page
+     * from KEY_LAST_PATH — so nothing is lost by cutting the other one loose.
      */
-    private fun retireDuplicateOfHomeTask() {
-        if (isFinishing || isChangingConfigurations) return
-        if (LauncherMode.isHomeInstance(this)) return
-        if (LauncherMode.isCurrentHome(this)) finish()
+    private fun removeOtherAppTasks() {
+        if (!LauncherMode.isHomeInstance(this)) return
+        val manager = getSystemService(ActivityManager::class.java) ?: return
+        runCatching {
+            manager.appTasks.forEach { task ->
+                val id = runCatching {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) task.taskInfo.taskId
+                    else @Suppress("DEPRECATION") task.taskInfo.id
+                }.getOrNull()
+                // Removing rather than finishing also clears the stale card out of
+                // Recents, where two CVapps side by side is its own kind of wrong.
+                if (id != null && id != taskId) task.finishAndRemoveTask()
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -300,6 +327,15 @@ class MainActivity : AppCompatActivity() {
         settingsDialog = null
         refreshSettings = null
         activityScope.cancel()
+
+        // Duplicate instances are now destroyed deliberately, so their WebView has
+        // to actually go with them — otherwise "removed the second session" would
+        // mean a dead activity still holding a live renderer. Detach first: destroy
+        // on an attached WebView is documented to misbehave.
+        runCatching {
+            (webView.parent as? android.view.ViewGroup)?.removeView(webView)
+            webView.destroy()
+        }
     }
 
     // ── WebView ───────────────────────────────────────────────────────────────
