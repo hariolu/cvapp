@@ -113,10 +113,10 @@ Everything configurable sits at the top of
 repository, and the app does not need one — each home is its own subdomain, and
 the app matches them by suffix.
 
-The logo is one vector, [`design/cv_logo_yote.svg`](design/cv_logo_yote.svg).
-`design/svg2vd.ps1` turns it into the `VectorDrawable` the app draws, and
-`design/render-brand.ps1` renders the PNGs used here. There is one copy of the
-artwork; everything else is generated from it.
+The logo is one vector, [`design/cv_logo_yote.svg`](design/cv_logo_yote.svg) —
+the loading screen, the launcher icon and the images on this page all come from
+it, and all of them are committed. [`design/README.md`](design/README.md) has the
+notes for regenerating them if the drawing ever changes.
 
 ## Notes for anyone maintaining this
 

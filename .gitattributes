@@ -8,7 +8,6 @@ gradlew text eol=lf
 
 # Windows-only scripts stay CRLF.
 gradlew.bat text eol=crlf
-*.ps1       text eol=crlf
 
 # Binary: never touch, never diff.
 *.jar   binary

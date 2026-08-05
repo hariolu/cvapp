@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Generated from design/cv_logo_yote.svg by design/svg2vd.ps1. -->
-<!-- Do not hand-edit: regenerate from the SVG instead.           -->
+<!-- Generated from design/cv_logo_yote.svg. Do not hand-edit — regenerate from -->
+<!-- the SVG instead; design/README.md says how, and what to check afterwards. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="110dp"
     android:height="110dp"
