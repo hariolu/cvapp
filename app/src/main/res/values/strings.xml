@@ -39,7 +39,7 @@
     <string name="update_up_to_date">CVapp %1$s is the latest version</string>
     <string name="update_check_failed">Couldn\'t reach GitHub to check for updates</string>
     <string name="update_needs_permission_title">Allow installing updates</string>
-    <string name="update_needs_permission_body">Android needs your permission before CVapp can install its own updates. Turn on \"Allow from this source\", then press Update again.</string>
+    <string name="update_needs_permission_body">Android needs your permission before CVapp can install its own updates. Turn on \"Allow from this source\" — the download carries on by itself when you come back.</string>
     <string name="update_open_settings">Open settings</string>
     <string name="update_no_installer">No package installer available on this device</string>
 </resources>
