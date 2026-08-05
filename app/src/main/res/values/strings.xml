@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CVapp</string>
+    <string name="deep_link_rejected">That link doesn\'t point inside Coyotes Vision — ignored</string>
+
+    <!-- First-run hint: web links need one-time approval on Android 12+ -->
+    <string name="link_hint_title">Open Coyotes Vision links here</string>
+    <string name="link_hint_body">Links from CVBot and your Home Assistant notifications can open straight in this app, on the right page.\n\nAndroid needs your permission once. Tick \"%1$s\" under \"Links to open in this app\".\n\nUntil then those links open in your browser instead.</string>
+    <string name="link_hint_dont_show">Don\'t show this again</string>
+    <string name="link_hint_open_settings">Open settings</string>
+    <string name="link_hint_later">Not now</string>
+
+    <!-- Self-update -->
+    <string name="update_available_title">CVapp %1$s is available</string>
+    <string name="update_available_body">You have %1$s.</string>
+    <string name="update_action_install">Update</string>
+    <string name="update_action_later">Later</string>
+    <string name="update_downloading">Downloading update…</string>
+    <string name="update_download_failed">Download failed — check your connection and try again</string>
+    <string name="update_checking">Checking for updates…</string>
+    <string name="update_up_to_date">CVapp %1$s is the latest version</string>
+    <string name="update_check_failed">Couldn\'t reach GitHub to check for updates</string>
+    <string name="update_needs_permission_title">Allow installing updates</string>
+    <string name="update_needs_permission_body">Android needs your permission before CVapp can install its own updates. Turn on \"Allow from this source\", then press Update again.</string>
+    <string name="update_open_settings">Open settings</string>
+    <string name="update_no_installer">No package installer available on this device</string>
+</resources>

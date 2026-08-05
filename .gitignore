@@ -1,0 +1,28 @@
+# ── Signing ──────────────────────────────────────────────────────────────────
+# The release key is the app's identity: Android refuses to install an update
+# signed by a different key, so a leaked key would let anyone push a "CVapp
+# update" onto every phone that has it. It never enters the repo, in any form.
+*.jks
+*.keystore
+keystore.properties
+*.p12
+
+# ── Build output ─────────────────────────────────────────────────────────────
+# "build/" and not "/build": the old pattern only caught the root one and let
+# app/build/ through.
+build/
+/captures
+.externalNativeBuild
+.cxx
+*.apk
+*.aab
+output-metadata.json
+
+# ── Local tooling ────────────────────────────────────────────────────────────
+local.properties
+.gradle
+.kotlin
+*.iml
+/.idea
+.DS_Store
+Thumbs.db

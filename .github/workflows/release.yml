@@ -1,0 +1,138 @@
+name: Release
+
+# Tag -> signed APK -> GitHub release. The in-app updater reads that release, so
+# this workflow is the only supported way to ship a build to existing installs.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write        # required to create the release and upload the APK
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0     # the version guard below compares against the previous tag
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # ── Version guards ───────────────────────────────────────────────────
+      # Two mistakes are easy to make and both are invisible until users are
+      # already stuck, so they fail the build instead.
+      - name: Check tag matches versionName
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME#v}"
+          NAME=$(sed -n 's/.*versionName[[:space:]]*"\([^"]*\)".*/\1/p' app/build.gradle | head -1)
+          echo "tag=$TAG versionName=$NAME"
+          if [ "$TAG" != "$NAME" ]; then
+            echo "::error::Tag v$TAG does not match versionName $NAME in app/build.gradle."
+            echo "The updater compares versionName, so a mismatch means it offers a version that does not exist."
+            exit 1
+          fi
+
+      - name: Check versionCode increased
+        run: |
+          set -euo pipefail
+          read_code() { sed -n 's/.*versionCode[[:space:]]*\([0-9]*\).*/\1/p' "$1" | head -1; }
+          NOW=$(read_code app/build.gradle)
+          PREV_TAG=$(git tag --list 'v*' --sort=-v:refname | grep -v "^${GITHUB_REF_NAME}$" | head -1 || true)
+          if [ -z "$PREV_TAG" ]; then
+            echo "No previous tag; first release with versionCode $NOW."
+            exit 0
+          fi
+          git show "$PREV_TAG:app/build.gradle" > /tmp/prev.gradle
+          PREV=$(read_code /tmp/prev.gradle)
+          echo "versionCode: $PREV ($PREV_TAG) -> $NOW"
+          if [ "$NOW" -le "$PREV" ]; then
+            echo "::error::versionCode must increase. $PREV_TAG had $PREV, this tag has $NOW."
+            echo "Android rejects an install whose versionCode is not higher, so users would download the update and watch it fail."
+            exit 1
+          fi
+
+      # ── Signing ──────────────────────────────────────────────────────────
+      - name: Restore keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::Secret KEYSTORE_BASE64 is not set. See docs/RELEASING.md."
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/cvapp-release.jks"
+
+      - name: Build signed release APK
+        env:
+          CVAPP_STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          CVAPP_KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          CVAPP_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          export CVAPP_STORE_FILE="$RUNNER_TEMP/cvapp-release.jks"
+          ./gradlew assembleRelease --console=plain --stacktrace
+
+      - name: Verify the APK is signed with the expected key
+        run: |
+          set -euo pipefail
+          APK=$(find app/build/outputs/apk/release -name '*.apk' | head -1)
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -1)
+          "$APKSIGNER" verify --print-certs "$APK"
+          FP=$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/.*SHA-256 digest: //p' | head -1)
+          echo "signer sha256=$FP"
+          if [ -n "${EXPECTED_SHA256:-}" ] && [ "$FP" != "$EXPECTED_SHA256" ]; then
+            echo "::error::APK is signed by an unexpected key. Existing installs could not update from this."
+            exit 1
+          fi
+        env:
+          EXPECTED_SHA256: ${{ vars.SIGNING_CERT_SHA256 }}
+
+      # ── Publish ──────────────────────────────────────────────────────────
+      # An annotated tag's message becomes the release notes, which is the text
+      # users read in the in-app update dialog. Without one, fall back to
+      # generated notes — never to the raw commit message, which carries commit
+      # trailers nobody outside this repo should be shown.
+      - name: Restore the annotated tag object
+        run: |
+          set -euo pipefail
+          # actions/checkout fetches tags, then immediately clobbers the one it
+          # is building: its second fetch runs "--no-tags <commit-sha>:refs/tags/<tag>",
+          # which rewrites the ref as a *lightweight* tag pointing at the commit.
+          # %(contents) then dereferences to the commit and returns its message.
+          # Re-fetching the ref from the remote restores the real tag object.
+          git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          echo "tag object type: $(git cat-file -t "$GITHUB_REF_NAME")"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          APK=$(find app/build/outputs/apk/release -name '*.apk' | head -1)
+
+          # Only an actual tag object carries a message. Checking the type is
+          # what keeps a lightweight tag from silently publishing the commit
+          # message instead — the failure that shipped in v1.10.
+          NOTES=""
+          if [ "$(git cat-file -t "$GITHUB_REF_NAME" 2>/dev/null || true)" = "tag" ]; then
+            NOTES=$(git tag -l --format='%(contents)' "$GITHUB_REF_NAME" | sed '/^-----BEGIN/,$d')
+          fi
+
+          if [ -n "$(echo "$NOTES" | tr -d '[:space:]')" ]; then
+            gh release create "$GITHUB_REF_NAME" "$APK" --title "CVapp ${GITHUB_REF_NAME#v}" --notes "$NOTES"
+          else
+            echo "::warning::No annotated tag message; falling back to generated notes."
+            gh release create "$GITHUB_REF_NAME" "$APK" --title "CVapp ${GITHUB_REF_NAME#v}" --generate-notes
+          fi
+
+      - name: Clean up keystore
+        if: always()
+        run: rm -f "$RUNNER_TEMP/cvapp-release.jks"

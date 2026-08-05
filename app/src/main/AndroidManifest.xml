@@ -1,0 +1,92 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Self-update. CVapp is distributed from GitHub Releases, not a store, so
+         it installs its own updates. Android still requires the user to grant
+         "install unknown apps" to this app once, in Settings. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:usesCleartextTraffic="true"
+        android:theme="@style/Theme.CVapp">
+
+        <!-- singleTask: a link tapped while the app is already running has to reach
+             the live WebView through onNewIntent, not spawn a second activity with
+             a second WebView and a second HA session on top of the first. -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="screenSize|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- App-private scheme — cvha://cv-panel#trips
+                 Never needs domain verification, so it always works: HA actionable
+                 notifications, home-screen shortcuts, QR codes, dashboard buttons. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="${linkScheme}" />
+            </intent-filter>
+
+            <!-- Any instance subdomain — <slug>.coyotes.vision — which is what
+                 CVBot already puts in its messages. A wildcard rather than one
+                 named host: every house has its own subdomain, and naming one
+                 would both leak it and pin this build to a single address.
+                 Note "*." does not match the bare domain, so the marketing site
+                 keeps opening in a browser, as it should.
+
+                 Kept in its own filter: these are the hosts that can later carry
+                 android:autoVerify + assetlinks.json, and a non-verifiable host
+                 sharing the filter would drag the whole thing down with it. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="*.${instanceDomain}" />
+            </intent-filter>
+
+            <!-- The local instance. Not verifiable at all (plain http, no publicly
+                 reachable .well-known), so this one can only ever be switched on by
+                 hand in Settings → Open by default. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="http"
+                    android:host="${localHost}"
+                    android:port="${localPort}" />
+            </intent-filter>
+        </activity>
+
+        <!-- Hands the downloaded APK to the system installer. Not exported: only
+             this app may query it, and the installer gets in on a per-Intent
+             read grant that expires with the Intent. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
+    </application>
+
+</manifest>

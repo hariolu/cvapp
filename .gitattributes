@@ -1,0 +1,21 @@
+# Normalise to LF in the repo; Windows checkouts still get CRLF where it matters.
+* text=auto eol=lf
+
+# gradlew is executed by /bin/sh on the CI runner. A CRLF here makes the shebang
+# line read as "/bin/sh\r", and the build dies with "bad interpreter".
+gradlew text eol=lf
+*.sh    text eol=lf
+
+# Windows-only scripts stay CRLF.
+gradlew.bat text eol=crlf
+*.ps1       text eol=crlf
+
+# Binary: never touch, never diff.
+*.jar   binary
+*.png   binary
+*.webp  binary
+*.jpg   binary
+*.apk   binary
+*.aab   binary
+*.jks   binary
+*.keystore binary

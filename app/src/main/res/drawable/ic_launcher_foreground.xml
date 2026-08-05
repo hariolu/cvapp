@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Same artwork as @drawable/logo, just held away from the edges — there is only
+  one logo, so there is only one copy of it.
+
+  An adaptive icon is a 108dp canvas of which just the middle ~72dp survives
+  every mask shape, so the raw logo would lose the coyote's spread arms to a
+  circular mask. 18.5% a side leaves 68dp of canvas; the artwork spans its own
+  viewport almost edge to edge horizontally (1247 of 1248 units), so that lands
+  it at very nearly 68dp wide, comfortably inside the mask.
+
+  A fraction rather than dp on purpose: the system renders this at whatever
+  pixel size each surface asks for, and a fixed dp inset would drift.
+-->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/logo"
+    android:inset="18.5%" />

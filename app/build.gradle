@@ -1,0 +1,133 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+// ── Service binding ──────────────────────────────────────────────────────────
+// No instance hostname appears anywhere in this build, on purpose.
+//
+// Every house is its own subdomain — <slug>.coyotes.vision — and a subdomain
+// names a real address with real people behind it. Naming one here would put it
+// in a public repository forever, so the app is bound to the *domain* instead
+// and matches instances by suffix.
+//
+// It does not need to know more than that: remote entry goes through the login
+// portal, which redirects each user to their own instance after OTP. The app
+// learns which house it is on by arriving there.
+//
+// These values feed both BuildConfig (runtime) and the manifest's deep-link
+// filters, so a host is never spelled out in two places that can drift apart.
+def instanceDomain = 'coyotes.vision'
+def loginHost      = "login.${instanceDomain}"
+def localHost      = 'ha.local'
+def localPort      = '8123'
+def linkScheme     = 'cvha'
+
+// Where the in-app updater looks for new builds. "owner/repo" on github.com.
+def updateRepo = 'hariolu/cvapp'
+
+// ── Release signing ──────────────────────────────────────────────────────────
+// There is no Play App Signing here: this key IS the app's identity, forever.
+// Android installs an update only over a matching signature, so changing keys
+// later would strand every existing install.
+//
+// Two ways in, in priority order:
+//   1. keystore.properties in the project root — local builds. Gitignored, and
+//      it only points at the keystore; the .jks itself lives outside the repo.
+//   2. CVAPP_* environment variables — CI, fed from repository secrets.
+// Neither present (a fresh clone) is fine: release builds just come out
+// unsigned rather than failing, so `assembleDebug` still works for anyone.
+def keystoreProps = new Properties()
+def keystorePropsFile = rootProject.file('keystore.properties')
+if (keystorePropsFile.exists()) {
+    keystorePropsFile.withInputStream { keystoreProps.load(it) }
+}
+
+def signingStoreFile = keystoreProps['storeFile'] ?: System.getenv('CVAPP_STORE_FILE')
+def signingStorePass = keystoreProps['storePassword'] ?: System.getenv('CVAPP_STORE_PASSWORD')
+def signingKeyAlias  = keystoreProps['keyAlias'] ?: System.getenv('CVAPP_KEY_ALIAS')
+def signingKeyPass   = keystoreProps['keyPassword'] ?: System.getenv('CVAPP_KEY_PASSWORD')
+def canSignRelease   = signingStoreFile != null && file(signingStoreFile).exists()
+
+android {
+    namespace 'com.cvapp'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.cvapp"
+        minSdk 26
+        targetSdk 35
+        versionCode 12
+        versionName "1.11"
+
+        manifestPlaceholders = [
+                instanceDomain: instanceDomain,
+                localHost     : localHost,
+                localPort     : localPort,
+                linkScheme    : linkScheme
+        ]
+
+        buildConfigField "String", "INSTANCE_DOMAIN", "\"${instanceDomain}\""
+        buildConfigField "String", "LOGIN_HOST",      "\"${loginHost}\""
+        buildConfigField "String", "LOGIN_URL",       "\"https://${loginHost}/\""
+        buildConfigField "String", "LOCAL_HOST",      "\"${localHost}\""
+        buildConfigField "String", "LOCAL_URL",       "\"http://${localHost}:${localPort}/\""
+        buildConfigField "String", "LINK_SCHEME",     "\"${linkScheme}\""
+        buildConfigField "String", "UPDATE_REPO",     "\"${updateRepo}\""
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    signingConfigs {
+        if (canSignRelease) {
+            release {
+                storeFile     file(signingStoreFile)
+                storePassword signingStorePass
+                keyAlias      signingKeyAlias
+                keyPassword   signingKeyPass
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            // R8 off on purpose. The HA panel reaches into the app through
+            // @JavascriptInterface (CVAppBridge), which is called by name from
+            // JavaScript and so is invisible to shrinking analysis — one missing
+            // keep rule and the token bridge silently disappears at runtime.
+            // The app is a few hundred KB; there is nothing here worth that risk.
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (canSignRelease) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    // Release APKs are published as GitHub release assets, where the filename is
+    // what a user sees before downloading. "app-release.apk" tells them nothing.
+    applicationVariants.configureEach { variant ->
+        if (variant.buildType.name == 'release') {
+            variant.outputs.configureEach { output ->
+                output.outputFileName = "cvapp-${variant.versionName}.apk"
+            }
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.core:core-ktx:1.13.1'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
+}

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  What the FileProvider is allowed to hand out. Scoped to the single "updates"
+  directory and nothing else: a provider rooted higher would expose the WebView's
+  cookie and localStorage files, which hold live Home Assistant tokens.
+
+  Both roots are listed because getExternalFilesDir() returns null when external
+  storage is unavailable and Updater.download() falls back to filesDir.
+-->
+<paths>
+    <external-files-path name="updates" path="updates/" />
+    <files-path name="internal_updates" path="updates/" />
+</paths>

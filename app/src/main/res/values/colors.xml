@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Adaptive icon background is transparent: the coyote is a sticker, and a
+         filled plate behind it just reads as a badge on any launcher wallpaper. -->
+    <color name="ic_launcher_background">#00000000</color>
+</resources>

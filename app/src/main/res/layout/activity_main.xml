@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootLayout"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#FF111111">
+
+    <WebView
+        android:id="@+id/webView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#FF111111" />
+
+    <!-- ══ LOADING / STATUS SCREEN ══ -->
+    <!-- The one screen used for everything: initial load, the local⇄remote
+         switch animation, and masking connection trouble. The browser never
+         gets to show its own error UI — this screen and its status line are
+         all the user ever sees while the app sorts things out in the background. -->
+    <FrameLayout
+        android:id="@+id/loadingView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#FF121212"
+        android:visibility="visible">
+
+        <LinearLayout
+            android:id="@+id/switchLocalColumn"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="start|center_vertical"
+            android:layout_marginStart="28dp"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:alpha="0">
+
+            <TextView
+                android:id="@+id/switchLocalEmoji"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🏠"
+                android:textSize="48sp" />
+
+            <TextView
+                android:id="@+id/switchLocalLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="LOCAL"
+                android:textColor="#FFFFFFFF"
+                android:textSize="11sp"
+                android:letterSpacing="0.08"
+                android:textStyle="bold"
+                android:layout_marginTop="8dp" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/switchRemoteColumn"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end|center_vertical"
+            android:layout_marginEnd="28dp"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:alpha="0">
+
+            <TextView
+                android:id="@+id/switchRemoteEmoji"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="☁️"
+                android:textSize="48sp" />
+
+            <TextView
+                android:id="@+id/switchRemoteLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="REMOTE"
+                android:textColor="#FFFFFFFF"
+                android:textSize="11sp"
+                android:letterSpacing="0.08"
+                android:textStyle="bold"
+                android:layout_marginTop="8dp" />
+
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:orientation="vertical"
+            android:gravity="center">
+
+            <ImageView
+                android:id="@+id/loadingLogo"
+                android:layout_width="110dp"
+                android:layout_height="110dp"
+                android:src="@drawable/logo"
+                android:scaleType="fitCenter"
+                android:layout_marginBottom="28dp"
+                android:alpha="0" />
+
+            <TextView
+                android:id="@+id/loadingTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Coyotes Vision"
+                android:textColor="#FFFFFFFF"
+                android:textSize="24sp"
+                android:textStyle="bold"
+                android:letterSpacing="0.04"
+                android:layout_marginBottom="4dp"
+                android:alpha="0" />
+
+            <TextView
+                android:id="@+id/loadingSubtitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Home Assistant Portal"
+                android:textColor="#FF888888"
+                android:textSize="13sp"
+                android:letterSpacing="0.06"
+                android:layout_marginBottom="32dp"
+                android:alpha="0" />
+
+            <ProgressBar
+                android:id="@+id/loadingProgress"
+                android:layout_width="32dp"
+                android:layout_height="32dp"
+                android:indeterminate="true"
+                android:layout_marginBottom="16dp"
+                android:alpha="0" />
+
+            <TextView
+                android:id="@+id/loadingStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Starting..."
+                android:textColor="#FF666666"
+                android:textSize="12sp"
+                android:letterSpacing="0.03"
+                android:alpha="0" />
+
+            <!-- The address actually being dialled. "Connecting locally" above
+                 says which side won; this says what it resolved to, which is the
+                 first thing worth knowing when a connection misbehaves. -->
+            <TextView
+                android:id="@+id/loadingEndpoint"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FF3D3D3D"
+                android:textSize="11sp"
+                android:fontFamily="monospace"
+                android:layout_marginTop="6dp"
+                android:alpha="0" />
+
+            <TextView
+                android:id="@+id/loadingRetryHint"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Tap to retry now"
+                android:textColor="#FF888888"
+                android:textSize="12sp"
+                android:letterSpacing="0.03"
+                android:textStyle="bold"
+                android:padding="12dp"
+                android:layout_marginTop="8dp"
+                android:alpha="0" />
+
+        </LinearLayout>
+
+        <!-- Bottom row: who this is on the left, which build on the right. -->
+        <TextView
+            android:id="@+id/loadingBrand"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|start"
+            android:layout_margin="16dp"
+            android:text="coyotes.vision"
+            android:textColor="#FF444444"
+            android:textSize="11sp"
+            android:letterSpacing="0.04"
+            android:alpha="0" />
+
+        <TextView
+            android:id="@+id/loadingVersion"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="16dp"
+            android:textColor="#FF444444"
+            android:textSize="11sp"
+            android:alpha="0" />
+
+    </FrameLayout>
+
+</FrameLayout>
