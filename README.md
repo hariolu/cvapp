@@ -18,13 +18,14 @@ source is here so that suspicion has somewhere to go: read it, build it yourself
 compare it against the release you were given.
 
 There is no analytics, no crash reporting, no advertising identifier, and no
-telemetry of any kind. The app has exactly three dependencies and none of them
+telemetry of any kind. The app has exactly four dependencies and none of them
 belong to Google:
 
 ```groovy
 implementation 'androidx.appcompat:appcompat:1.7.0'
 implementation 'androidx.core:core-ktx:1.13.1'
 implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
+implementation 'com.wireguard.android:tunnel:1.0.20260102'
 ```
 
 It talks to your Home Assistant instance and to this repository's releases page.

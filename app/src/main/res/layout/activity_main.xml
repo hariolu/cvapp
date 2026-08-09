@@ -193,4 +193,33 @@
 
     </FrameLayout>
 
+    <!-- ══ IN-APP DIALOGS ══ -->
+    <!-- Every dialog in this app (OTP sign-in, settings, update prompts, the
+         link-permission hint) is a card that animates in here instead of a
+         system AlertDialog window — same dark/branded look on every OEM skin.
+         One slot: only one dialog is ever on screen at a time. Content is
+         inflated into dialogCard at runtime, see MainActivity.showDialog(). -->
+    <FrameLayout
+        android:id="@+id/dialogScrim"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="#CC000000"
+        android:visibility="gone"
+        android:clickable="true"
+        android:focusable="true">
+
+        <FrameLayout
+            android:id="@+id/dialogCard"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:layout_marginStart="28dp"
+            android:layout_marginEnd="28dp"
+            android:background="@drawable/dialog_card_bg"
+            android:elevation="8dp"
+            android:clickable="true"
+            android:focusable="true" />
+
+    </FrameLayout>
+
 </FrameLayout>

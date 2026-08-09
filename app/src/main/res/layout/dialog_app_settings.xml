@@ -1,144 +1,230 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- The app's own settings, as opposed to Home Assistant's. Everything here is
      about the container: which screen it replaces, which links reach it, and
-     which build it is. -->
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+     which build it is. Hosted in dialogCard, not a system dialog — colors are
+     hardcoded for the dark card rather than ?android:attr/textColorPrimary,
+     which used to track the AlertDialog's own (day/night) background and would
+     go invisible against our always-dark card on a light-mode system. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content">
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
         android:paddingStart="24dp"
-        android:paddingEnd="24dp"
-        android:paddingTop="8dp"
-        android:paddingBottom="4dp">
+        android:paddingEnd="8dp"
+        android:paddingTop="16dp"
+        android:paddingBottom="8dp">
 
-        <!-- ── Home screen ── -->
-        <LinearLayout
-            android:id="@+id/settingsHomeRow"
-            android:layout_width="match_parent"
+        <TextView
+            android:layout_width="0dp"
             android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical"
-            android:background="?attr/selectableItemBackground"
+            android:layout_weight="1"
+            android:text="@string/settings_title"
+            android:textColor="#FFFFFFFF"
+            android:textSize="17sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/settingsClose"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:text="✕"
+            android:textColor="#FF888888"
+            android:textSize="16sp"
+            android:gravity="center"
             android:clickable="true"
             android:focusable="true"
-            android:paddingTop="12dp"
-            android:paddingBottom="12dp">
+            android:background="?attr/selectableItemBackgroundBorderless" />
 
+    </LinearLayout>
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:paddingTop="0dp"
+            android:paddingBottom="8dp">
+
+            <!-- ── Home screen ── -->
             <LinearLayout
-                android:layout_width="0dp"
+                android:id="@+id/settingsHomeRow"
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:orientation="vertical">
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:background="?attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:paddingTop="12dp"
+                android:paddingBottom="12dp">
+
+                <LinearLayout
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/settings_home_title"
+                        android:textSize="16sp"
+                        android:textColor="#FFFFFFFF" />
+
+                    <TextView
+                        android:id="@+id/settingsHomeSubtitle"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="2dp"
+                        android:textSize="13sp"
+                        android:textColor="#FFAAAAAA" />
+
+                </LinearLayout>
+
+                <androidx.appcompat.widget.SwitchCompat
+                    android:id="@+id/settingsHomeSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="16dp" />
+
+            </LinearLayout>
+
+            <TextView
+                android:id="@+id/settingsHomeNote"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="@string/settings_home_note"
+                android:textSize="12sp"
+                android:textColor="#FFAAAAAA"
+                android:alpha="0.75"
+                android:layout_marginBottom="8dp" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="#FF2A2A2A" />
+
+            <!-- ── Links ── -->
+            <LinearLayout
+                android:id="@+id/settingsLinksRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="?attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:paddingTop="14dp"
+                android:paddingBottom="14dp">
 
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/settings_home_title"
+                    android:text="@string/settings_links_title"
                     android:textSize="16sp"
-                    android:textColor="?android:attr/textColorPrimary" />
+                    android:textColor="#FFFFFFFF" />
 
                 <TextView
-                    android:id="@+id/settingsHomeSubtitle"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:text="@string/settings_links_subtitle"
+                    android:textSize="13sp"
+                    android:textColor="#FFAAAAAA" />
+
+            </LinearLayout>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="#FF2A2A2A" />
+
+            <!-- ── Updates ── -->
+            <LinearLayout
+                android:id="@+id/settingsUpdateRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:background="?attr/selectableItemBackground"
+                android:clickable="true"
+                android:focusable="true"
+                android:paddingTop="14dp"
+                android:paddingBottom="14dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/settings_update_title"
+                    android:textSize="16sp"
+                    android:textColor="#FFFFFFFF" />
+
+                <TextView
+                    android:id="@+id/settingsUpdateSubtitle"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
                     android:textSize="13sp"
-                    android:textColor="?android:attr/textColorSecondary" />
+                    android:textColor="#FFAAAAAA" />
 
             </LinearLayout>
 
-            <androidx.appcompat.widget.SwitchCompat
-                android:id="@+id/settingsHomeSwitch"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginStart="16dp" />
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="#FF2A2A2A" />
 
-        </LinearLayout>
-
-        <TextView
-            android:id="@+id/settingsHomeNote"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/settings_home_note"
-            android:textSize="12sp"
-            android:textColor="?android:attr/textColorSecondary"
-            android:alpha="0.75"
-            android:layout_marginBottom="8dp" />
-
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:background="?android:attr/textColorSecondary"
-            android:alpha="0.15" />
-
-        <!-- ── Links ── -->
-        <LinearLayout
-            android:id="@+id/settingsLinksRow"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:background="?attr/selectableItemBackground"
-            android:clickable="true"
-            android:focusable="true"
-            android:paddingTop="14dp"
-            android:paddingBottom="14dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_links_title"
-                android:textSize="16sp"
-                android:textColor="?android:attr/textColorPrimary" />
-
-            <TextView
+            <!-- ── About ── -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:text="@string/settings_links_subtitle"
-                android:textSize="13sp"
-                android:textColor="?android:attr/textColorSecondary" />
+                android:orientation="horizontal"
+                android:paddingTop="14dp"
+                android:paddingBottom="10dp">
+
+                <TextView
+                    android:id="@+id/settingsSiteLink"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/settings_about_site"
+                    android:textColor="#FF8B9FF4"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:padding="8dp"
+                    android:gravity="center"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:background="?attr/selectableItemBackground" />
+
+                <TextView
+                    android:id="@+id/settingsGithubLink"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="@string/settings_about_github"
+                    android:textColor="#FF8B9FF4"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:padding="8dp"
+                    android:gravity="center"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:background="?attr/selectableItemBackground" />
+
+            </LinearLayout>
 
         </LinearLayout>
 
-        <View
-            android:layout_width="match_parent"
-            android:layout_height="1dp"
-            android:background="?android:attr/textColorSecondary"
-            android:alpha="0.15" />
+    </ScrollView>
 
-        <!-- ── Updates ── -->
-        <LinearLayout
-            android:id="@+id/settingsUpdateRow"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:background="?attr/selectableItemBackground"
-            android:clickable="true"
-            android:focusable="true"
-            android:paddingTop="14dp"
-            android:paddingBottom="14dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_update_title"
-                android:textSize="16sp"
-                android:textColor="?android:attr/textColorPrimary" />
-
-            <TextView
-                android:id="@+id/settingsUpdateSubtitle"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="2dp"
-                android:textSize="13sp"
-                android:textColor="?android:attr/textColorSecondary" />
-
-        </LinearLayout>
-
-    </LinearLayout>
-
-</ScrollView>
+</LinearLayout>

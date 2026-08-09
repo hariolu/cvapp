@@ -5,7 +5,7 @@
 
     <!-- First-run hint: web links need one-time approval on Android 12+ -->
     <string name="link_hint_title">Open Coyotes Vision links here</string>
-    <string name="link_hint_body">Links from CVBot and your Home Assistant notifications can open straight in this app, on the right page.\n\nAndroid needs your permission once. Tick \"%1$s\" under \"Links to open in this app\".\n\nUntil then those links open in your browser instead.</string>
+    <string name="link_hint_body">Links from CVBot and your Home Assistant notifications can open straight in this app, on the right page.\n\nAndroid needs your permission once. Tick \"%1$s\" under \"Links to open in this app\".\n\nUntil then, those links won\'t land here — and remote access only works from inside this app.</string>
     <string name="link_hint_dont_show">Don\'t show this again</string>
     <string name="link_hint_open_settings">Open settings</string>
     <string name="link_hint_later">Not now</string>
@@ -23,10 +23,13 @@
     <string name="settings_home_no_picker">This device has no home app settings screen</string>
 
     <string name="settings_links_title">Links to open in this app</string>
-    <string name="settings_links_subtitle">Choose which Coyotes Vision links come here instead of the browser</string>
+    <string name="settings_links_subtitle">Open Coyotes Vision links from CVBot and notifications straight in this app</string>
 
     <string name="settings_update_title">Check for updates</string>
     <string name="settings_update_subtitle">Version %1$s</string>
+
+    <string name="settings_about_site">coyotes.vision ↗</string>
+    <string name="settings_about_github">GitHub ↗</string>
 
     <!-- Self-update -->
     <string name="update_available_title">CVapp %1$s is available</string>
@@ -42,4 +45,15 @@
     <string name="update_needs_permission_body">Android needs your permission before CVapp can install its own updates. Turn on \"Allow from this source\" — the download carries on by itself when you come back.</string>
     <string name="update_open_settings">Open settings</string>
     <string name="update_no_installer">No package installer available on this device</string>
+
+    <!-- VPN sign-in — remote access is WireGuard-only, gated by a Telegram OTP.
+         Mirrors login.coyotes.vision's own page, see dialog_otp.xml. -->
+    <string name="otp_brand">coyotes.vision</string>
+    <string name="otp_tagline">remote access sign-in</string>
+    <string name="otp_body">Get a 6-digit code from your Coyotes Vision bot on Telegram, then enter it below.</string>
+    <string name="otp_open_bot">Open Telegram bot ↗</string>
+    <string name="otp_incomplete">Enter all 6 digits</string>
+    <string name="otp_hint">000000</string>
+    <string name="otp_submit">Connect</string>
+    <string name="otp_cancel">Cancel</string>
 </resources>

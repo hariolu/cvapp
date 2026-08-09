@@ -21,22 +21,29 @@ import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.OvershootInterpolator
 import android.webkit.*
 import android.widget.CheckBox
+import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AlertDialog
+import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.widget.SwitchCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import com.wireguard.android.backend.Tunnel
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import java.io.File
 
 class MainActivity : AppCompatActivity() {
@@ -57,6 +64,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var loadingRetryHint: TextView
     private lateinit var switchLocalColumn: LinearLayout
     private lateinit var switchRemoteColumn: LinearLayout
+    private lateinit var switchRemoteEmoji: TextView
 
     private val prefs by lazy { getSharedPreferences("cvapp_prefs", Context.MODE_PRIVATE) }
     private var breathingAnimator: ObjectAnimator? = null
@@ -67,7 +75,33 @@ class MainActivity : AppCompatActivity() {
     private val mainHandler = Handler(Looper.getMainLooper())
     private var resolveJob: Job? = null
 
+    // Tracks connectRemote() specifically — it can sit for minutes waiting on the
+    // OTP dialog, which outlives the resolveJob that launched it. Without this,
+    // a network blip mid-wait could start loading LOCAL_URL while connectRemote()
+    // (and its dialog) is still running in the background.
+    private var connectJob: Job? = null
+
+    // ── VPN / Remote access ───────────────────────────────────────────────────
+    // REMOTE no longer means login.coyotes.vision — it means this tunnel is up
+    // and BuildConfig.LOCAL_URL is reachable through it. See VpnManager.kt,
+    // CvAuthApi.kt, SecureStore.kt.
+    private val vpnManager by lazy { VpnManager(this) }
+    private val secureStore by lazy { SecureStore(this) }
+    private lateinit var vpnPermissionLauncher: ActivityResultLauncher<Intent>
+    private var vpnPermissionContinuation: CancellableContinuation<Boolean>? = null
+
+    // ── In-app dialog host ────────────────────────────────────────────────────
+    private lateinit var dialogScrim: FrameLayout
+    private lateinit var dialogCard: FrameLayout
+    private var activeDialog: ActiveDialog? = null
+
     private var currentTarget: HaTarget? = null
+
+    // Set in onStop() when it tears down an active REMOTE tunnel, so onStart()
+    // knows to force a fresh connect rather than sitting on a dead one until
+    // the next periodic recheck (up to RECHECK_INTERVAL_MS later).
+    private var vpnDownOnStop = false
+
     private var consecutiveFailures = 0
     private var retryBackoffMs = INITIAL_BACKOFF_MS
 
@@ -82,6 +116,7 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val ERROR_SSL      = -999
         private const val ERROR_RENDERER = -998
+        private const val ERROR_VPN      = -997
 
         private const val RECHECK_INTERVAL_MS   = 20_000L
         private const val SWITCH_REVEAL_HOLD_MS = 900L
@@ -117,13 +152,11 @@ class MainActivity : AppCompatActivity() {
         private const val LINK_APP_SETTINGS = "app-settings"
     }
 
-    // Entry point for remote — OTP portal that redirects to this build's HA host.
-    // Local instance is hit directly since it's already on the trusted LAN.
-    // Both come from build.gradle so one APK stays bound to exactly one house.
-    private enum class HaTarget(val url: String) {
-        LOCAL(BuildConfig.LOCAL_URL),
-        REMOTE(BuildConfig.LOGIN_URL)
-    }
+    // LOCAL and REMOTE both end up loading the exact same BuildConfig.LOCAL_URL
+    // — the only difference is how we get there: real Wi-Fi, or the WireGuard
+    // tunnel (see VpnManager/CvAuthApi). There is no longer a second host or a
+    // separate login portal for this app to know about.
+    private enum class HaTarget { LOCAL, REMOTE }
 
     private val recheckRunnable = object : Runnable {
         override fun run() {
@@ -161,6 +194,14 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        // Must be registered before onStart, same as any ActivityResultLauncher —
+        // this is the one-time "CVapp wants to set up a VPN connection" system
+        // consent dialog, resumed via ensureVpnPermission()'s continuation.
+        vpnPermissionLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            vpnPermissionContinuation?.resume(result.resultCode == RESULT_OK)
+            vpnPermissionContinuation = null
+        }
+
         // First thing, before a second WebView gets built on top of the one that
         // is already out there. This is the instance Android keeps.
         removeOtherAppTasks()
@@ -192,6 +233,9 @@ class MainActivity : AppCompatActivity() {
         loadingRetryHint   = findViewById(R.id.loadingRetryHint)
         switchLocalColumn  = findViewById(R.id.switchLocalColumn)
         switchRemoteColumn = findViewById(R.id.switchRemoteColumn)
+        switchRemoteEmoji  = findViewById(R.id.switchRemoteEmoji)
+        dialogScrim        = findViewById(R.id.dialogScrim)
+        dialogCard         = findViewById(R.id.dialogCard)
 
         loadingVersion.text = "v${runCatching {
             packageManager.getPackageInfo(packageName, 0).versionName
@@ -269,12 +313,32 @@ class MainActivity : AppCompatActivity() {
         // appear after the home instance exists, and coming to the front is the
         // natural moment to be sure this is the only one.
         removeOtherAppTasks()
+        if (vpnDownOnStop) {
+            vpnDownOnStop = false
+            // Target hasn't changed (still REMOTE) so the normal resolve path
+            // would see nothing to do and leave the dead tunnel sitting there
+            // until the next periodic recheck — force it instead.
+            checkAvailabilityAndActOn(forceReload = true)
+        }
     }
 
     override fun onStop() {
         super.onStop()
         networkMonitor.stop()
         mainHandler.removeCallbacks(recheckRunnable)
+        // The VPN key stays in the status bar for as long as the tunnel is up,
+        // regardless of whether this app is on screen — that's Android's own
+        // system indicator, not ours to hide. Tearing the tunnel down here (as
+        // opposed to only on a LOCAL⇄REMOTE switch, see switchTo()) makes it
+        // disappear when the app actually closes, at the cost of a short
+        // reconnect on the way back in — cheap, since the WG key and refresh
+        // token are already on disk and neither VPN consent nor a fresh OTP is
+        // needed again, only ensureVpnPermission()'s null fast-path and a
+        // handshake.
+        if (currentTarget == HaTarget.REMOTE) {
+            vpnDownOnStop = true
+            activityScope.launch { vpnManager.down() }
+        }
     }
 
     /**
@@ -318,13 +382,8 @@ class MainActivity : AppCompatActivity() {
     override fun onDestroy() {
         super.onDestroy()
         mainHandler.removeCallbacksAndMessages(null)
-        // A dialog still attached to a dying Activity is a leaked window.
-        updateDialog?.takeIf { it.isShowing }?.dismiss()
-        updateDialog = null
-        linkHintDialog?.takeIf { it.isShowing }?.dismiss()
-        linkHintDialog = null
-        settingsDialog?.takeIf { it.isShowing }?.dismiss()
-        settingsDialog = null
+        // Dialogs are plain child views now, not separate windows — they die
+        // with the activity's own view tree, nothing to leak or dismiss here.
         refreshSettings = null
         activityScope.cancel()
 
@@ -399,14 +458,13 @@ class MainActivity : AppCompatActivity() {
                 // and the local instance inside the WebView; everything else is
                 // somebody else's site and goes to the browser.
                 val host = hostOf(url)
-                val allowed = isServiceHost(host) || host == BuildConfig.LOCAL_HOST
+                val allowed = isServiceHost(host) || host == BuildConfig.LOCAL_HOST || host == secureStore.tunnelHost
                 return if (!allowed) { openExternal(url); true } else false
             }
 
             override fun onPageStarted(view: WebView, url: String, fav: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, fav)
                 updateStatus("Loading...")
-                if (matchesTarget(url, HaTarget.LOCAL)) injectLocalAuthToken(view)
             }
 
             override fun onPageFinished(view: WebView, url: String) {
@@ -493,11 +551,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.setDownloadListener { url, _, _, _, _ -> runCatching { openExternal(url) } }
-    }
-
-    private fun matchesTarget(url: String, target: HaTarget): Boolean = when (target) {
-        HaTarget.LOCAL  -> hostOf(url) == BuildConfig.LOCAL_HOST
-        HaTarget.REMOTE -> isServiceHost(hostOf(url))
     }
 
     // ── Deep links ────────────────────────────────────────────────────────────
@@ -624,7 +677,10 @@ class MainActivity : AppCompatActivity() {
     private fun isHaAppHost(url: String): Boolean {
         val host = hostOf(url)
         if (host == BuildConfig.LOGIN_HOST) return false
-        return host == BuildConfig.LOCAL_HOST || isInstanceHost(host)
+        // mDNS doesn't cross the WireGuard tunnel, so REMOTE loads the LAN IP
+        // cv-auth handed back (tunnel_host) instead of BuildConfig.LOCAL_HOST —
+        // both count as "home", same as LOCAL_HOST does on real Wi-Fi.
+        return host == BuildConfig.LOCAL_HOST || host == secureStore.tunnelHost || isInstanceHost(host)
     }
 
     private fun originOf(url: String): String {
@@ -634,23 +690,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun pathOf(url: String): String =
         url.removePrefix(originOf(url)).ifBlank { "/" }
-
-    // ── Local instance auth ──────────────────────────────────────────────────
-    // TODO(verify against a live instance): the local HA origin (http://ha.local:8123)
-    // has its own localStorage, separate from the remote instance's, so a token saved
-    // while authenticated remotely isn't automatically visible here. CVAppBridge itself
-    // IS already reachable as window.CVAppBridge on this page (JS interfaces are bound
-    // to the WebView, not per-origin) — if the coyotes.vision frontend bundle deployed
-    // on the local instance already calls CVAppBridge.getToken() to authenticate, no
-    // further action is needed. If it doesn't, this is the place to inject HA's expected
-    // `hassTokens` localStorage entry — deliberately left as a no-op until we confirm the
-    // exact shape HA expects, since writing a malformed token would break login harder
-    // than showing the normal HA login screen.
-    private fun injectLocalAuthToken(view: WebView) {
-        val token = prefs.getString("cv_panel_token", "") ?: return
-        if (token.isBlank()) return
-        // Intentionally not writing to localStorage yet — see TODO above.
-    }
 
     // ── Availability resolution & switching ──────────────────────────────────
 
@@ -667,7 +706,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private suspend fun resolveTarget(): HaTarget =
-        if (networkMonitor.isOnWifi() && HaProbe.isReachable(HaTarget.LOCAL.url)) HaTarget.LOCAL else HaTarget.REMOTE
+        if (networkMonitor.isOnWifi() && HaProbe.isReachable(BuildConfig.LOCAL_URL)) HaTarget.LOCAL else HaTarget.REMOTE
 
     /** Central re-evaluation entry point: periodic timer, network changes, and error retries all funnel through here. */
     private fun checkAvailabilityAndActOn(forceReload: Boolean = false) {
@@ -694,6 +733,9 @@ class MainActivity : AppCompatActivity() {
         showSwitchEmoji(pending = false)
         revealSwitchEmoji(target)
         mainHandler.postDelayed({ hideSwitchEmoji() }, SWITCH_REVEAL_HOLD_MS)
+        // Real Wi-Fi makes the tunnel pointless overhead — drop it in the
+        // background, the LOCAL page load below doesn't wait on this.
+        if (target == HaTarget.LOCAL) activityScope.launch { vpnManager.down() }
         loadTarget(target)
     }
 
@@ -704,21 +746,245 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadTarget(target: HaTarget) {
         if (!loadingVisible) showLoading()
-        updateStatus(if (target == HaTarget.LOCAL) "Connecting locally..." else "Connecting remotely...")
-        loadingEndpoint.text = endpointLabel(target)
+        loadingEndpoint.text = endpointLabel()
         restoreArmed = true
-        webView.loadUrl(target.url)
+        when (target) {
+            HaTarget.LOCAL -> {
+                // A network blip could otherwise leave connectRemote() (and its
+                // OTP dialog) running in the background while LOCAL loads.
+                connectJob?.cancel()
+                updateStatus("Connecting locally...")
+                // Same URL as REMOTE (see haUrl()) — a second origin here is what
+                // used to make HA ask to sign in again after every Wi-Fi⇄tunnel
+                // switch, since hassTokens lives in localStorage, which is scoped
+                // per-origin.
+                webView.loadUrl(haUrl())
+            }
+            HaTarget.REMOTE -> {
+                // Already connecting — most commonly the OTP dialog sitting open
+                // waiting on the user. Don't restart the flow out from under it.
+                if (connectJob?.isActive == true) return
+                connectJob = activityScope.launch {
+                    if (connectRemote()) webView.loadUrl(haUrl())
+                    else enterTrouble(ERROR_VPN, keepStatus = true)
+                }
+            }
+        }
     }
 
-    /** host[:port] of a target — the address, without the scheme noise. */
-    private fun endpointLabel(target: HaTarget): String {
-        val uri = Uri.parse(target.url)
+    /**
+     * The page both targets load. `ha.local` (mDNS) only resolves on the real
+     * LAN — it cannot cross a routed WireGuard tunnel, multicast doesn't route —
+     * so the moment cv-auth has handed back this instance's LAN IP
+     * (tunnel_host, from a VPN bootstrap/refresh) it becomes the one true
+     * origin for BOTH targets, not just REMOTE. That's what keeps the HA
+     * session in localStorage alive across a Wi-Fi⇄tunnel switch: same origin
+     * either way. Before the first ever bootstrap, tunnelHost is unset and
+     * this just falls back to the mDNS name, exactly like LOCAL always did.
+     */
+    private fun haUrl(): String =
+        secureStore.tunnelHost?.let { "http://$it:${BuildConfig.LOCAL_PORT}/" } ?: BuildConfig.LOCAL_URL
+
+    /** host[:port] this app actually loads, on either side. */
+    private fun endpointLabel(): String {
+        val uri = Uri.parse(haUrl())
         val host = uri.host ?: return ""
         return if (uri.port > 0) "$host:${uri.port}" else host
     }
 
+    // ── In-app dialog host ────────────────────────────────────────────────────
+    // Every dialog in this app — OTP sign-in, settings, the link-permission
+    // hint, update prompts — is a card animated into dialogScrim/dialogCard
+    // (see activity_main.xml) instead of a system AlertDialog window. That
+    // keeps the same dark/branded look on every OEM skin rather than whatever
+    // theme Android ships, and it means a dialog is just a view in this
+    // activity's own hierarchy: nothing to leak, nothing to re-theme, and
+    // Back has to be handled by hand (see onBackPressed) since there's no
+    // Window intercepting it for us anymore. One slot — at most one dialog is
+    // ever on screen, matching how this app has only ever shown one at a time.
+
+    private class ActiveDialog(val cancelable: Boolean, val onDismiss: (() -> Unit)?)
+
+    /**
+     * Inflates [layoutRes] into the shared card and animates it on screen.
+     * Returns the inflated view so the caller can bind its own fields and
+     * button clicks — closing always goes through dismissDialog(), whichever
+     * button or gesture triggers it.
+     */
+    private fun showDialog(layoutRes: Int, cancelable: Boolean = true, onDismiss: (() -> Unit)? = null): View {
+        // Cancel first: a ViewPropertyAnimator's withEndAction still fires on
+        // cancel(), synchronously, so this clears out any dialog mid-dismiss
+        // before we touch the card ourselves — see dismissDialog().
+        dialogScrim.animate().cancel()
+        dialogCard.animate().cancel()
+        dialogCard.removeAllViews()
+        activeDialog = null
+
+        val view = layoutInflater.inflate(layoutRes, dialogCard, false)
+        dialogCard.addView(view)
+        activeDialog = ActiveDialog(cancelable, onDismiss)
+
+        dialogScrim.visibility = View.VISIBLE
+        dialogScrim.alpha = 0f
+        dialogScrim.animate().alpha(1f).setDuration(200).start()
+        dialogCard.alpha = 0f
+        dialogCard.scaleX = 0.88f
+        dialogCard.scaleY = 0.88f
+        dialogCard.animate().alpha(1f).scaleX(1f).scaleY(1f)
+            .setDuration(260).setInterpolator(OvershootInterpolator(1.6f)).start()
+
+        // Tapping the card itself must not fall through to the scrim below it.
+        dialogCard.setOnClickListener { }
+        dialogScrim.setOnClickListener { if (cancelable) dismissDialog() }
+
+        return view
+    }
+
+    private fun dismissDialog() {
+        val prev = activeDialog ?: return
+        activeDialog = null
+        dialogScrim.animate().alpha(0f).setDuration(180).withEndAction {
+            dialogScrim.visibility = View.GONE
+            dialogCard.removeAllViews()
+        }.start()
+        prev.onDismiss?.invoke()
+    }
+
+    private fun isDialogShowing(): Boolean = activeDialog != null
+
+    // ── VPN connect flow ──────────────────────────────────────────────────────
+    // REMOTE means exactly this, start to finish: reuse or renew a session
+    // (silently, at most once a cold start needs to touch cv-auth at all),
+    // bring the tunnel up, then the caller loads LOCAL_URL through it — same
+    // page, same origin, same auth as standing on the home Wi-Fi.
+
+    private suspend fun connectRemote(): Boolean {
+        if (vpnManager.currentState() == Tunnel.State.UP) return true
+
+        setSwitchStage(SwitchStage.KEY)
+        updateStatus("Checking access...")
+
+        val hadSession = secureStore.hasPeer()
+        var connected = false
+        if (hadSession) {
+            when (val r = CvAuthApi.refresh(secureStore.refreshToken!!)) {
+                is CvAuthApi.Result.Ok -> { applyVpnConfig(r.config); connected = true }
+                is CvAuthApi.Result.Failed -> updateStatus("Session expired — sign in again")
+            }
+        }
+
+        if (!connected) {
+            if (hadSession) secureStore.clearSession()   // stale token must not be retried as-is
+            val code = awaitOtpCode()
+            if (code == null) {
+                updateStatus("Sign-in cancelled")
+                return false
+            }
+            updateStatus("Verifying code...")
+            val pubkey = vpnManager.ensureKeyPair(secureStore)
+            when (val r = CvAuthApi.bootstrap(code, pubkey)) {
+                is CvAuthApi.Result.Ok -> applyVpnConfig(r.config)
+                is CvAuthApi.Result.Failed -> {
+                    updateStatus("Sign-in failed: ${r.message}")
+                    toast(r.message)
+                    return false
+                }
+            }
+        }
+
+        setSwitchStage(SwitchStage.LOCK_CLOSED)
+        updateStatus("Requesting VPN permission...")
+        if (!ensureVpnPermission()) {
+            updateStatus("VPN permission denied")
+            return false
+        }
+
+        updateStatus("Establishing tunnel...")
+        if (vpnManager.up(secureStore).isFailure) {
+            updateStatus("Home is offline, retrying...")
+            return false
+        }
+
+        setSwitchStage(SwitchStage.LOCK_OPEN)
+        updateStatus("Tunnel up, loading dashboard...")
+        return true
+    }
+
+    private fun applyVpnConfig(config: CvAuthApi.VpnConfig) {
+        secureStore.refreshToken = config.refreshToken
+        secureStore.serverPubkey = config.serverPubkey
+        secureStore.endpoint     = config.endpoint
+        secureStore.tunnelIp     = config.tunnelIp
+        secureStore.tunnelHost   = config.tunnelHost
+        secureStore.lanCidr      = config.lanCidr
+    }
+
+    private suspend fun ensureVpnPermission(): Boolean {
+        val intent = vpnManager.permissionIntent() ?: return true
+        return suspendCancellableCoroutine { cont ->
+            vpnPermissionContinuation = cont
+            vpnPermissionLauncher.launch(intent)
+            cont.invokeOnCancellation { vpnPermissionContinuation = null }
+        }
+    }
+
+    /**
+     * The 6-digit Telegram OTP — null if the user cancels. The view carries the
+     * whole presentation (brand, instructions, bot link); mirrors what
+     * login.coyotes.vision's own page did before REMOTE stopped using a
+     * WebView for this.
+     */
+    private suspend fun awaitOtpCode(): String? = suspendCancellableCoroutine { cont ->
+        mainHandler.post {
+            if (isFinishing || isDestroyed) { cont.resume(null); return@post }
+
+            var resumed = false
+            val view = showDialog(R.layout.dialog_otp, cancelable = true) {
+                if (!resumed) { resumed = true; cont.resume(null) }
+            }
+            val input = view.findViewById<EditText>(R.id.otpCodeInput)
+            val status = view.findViewById<TextView>(R.id.otpStatus)
+            view.findViewById<TextView>(R.id.otpOpenBot).setOnClickListener {
+                openExternal(BuildConfig.OTP_BOT_URL)
+            }
+            view.findViewById<TextView>(R.id.otpBrand).setOnClickListener { openExternal(siteUrl()) }
+
+            fun submit() {
+                val code = input.text?.toString()?.trim().orEmpty()
+                if (code.length != 6) {
+                    status.text = getString(R.string.otp_incomplete)
+                    status.visibility = View.VISIBLE
+                    return
+                }
+                resumed = true
+                cont.resume(code)
+                dismissDialog()
+            }
+
+            view.findViewById<View>(R.id.otpSubmit).setOnClickListener { submit() }
+            view.findViewById<View>(R.id.otpCancel).setOnClickListener {
+                resumed = true
+                cont.resume(null)
+                dismissDialog()
+            }
+            input.setOnEditorActionListener { _, _, _ -> submit(); true }
+            input.addTextChangedListener(object : android.text.TextWatcher {
+                override fun afterTextChanged(s: android.text.Editable?) {
+                    status.visibility = View.GONE
+                    if (s?.length == 6) submit()
+                }
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            })
+
+            cont.invokeOnCancellation { mainHandler.post { dismissDialog() } }
+        }
+    }
+
     private fun openExternal(url: String) =
         runCatching { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+
+    private fun siteUrl(): String = "https://${BuildConfig.INSTANCE_DOMAIN}/"
 
     // ── First-run link hint ───────────────────────────────────────────────────
     // Android 12 stopped offering a chooser for unverified web links: they go
@@ -729,33 +995,28 @@ class MainActivity : AppCompatActivity() {
     // The hint is asked for once per launch but answers itself first: if the links
     // already work it never appears, and the checkbox silences it for good.
 
-    private var linkHintDialog: AlertDialog? = null
-
     private fun maybeShowLinkHint() {
         if (isFinishing || isDestroyed) return
         if (prefs.getBoolean(KEY_LINK_HINT_DISMISSED, false)) return
-        if (linkHintDialog?.isShowing == true) return
-        if (updateDialog?.isShowing == true) return   // don't stack dialogs
+        if (isDialogShowing()) return   // don't stack over the OTP/settings/update cards
         if (webLinksAlreadyHandled()) return
 
         val host = "*.${BuildConfig.INSTANCE_DOMAIN}"
-        val view = layoutInflater.inflate(R.layout.dialog_link_hint, null)
-        val dontShow = view.findViewById<CheckBox>(R.id.linkHintDontShow)
-
-        linkHintDialog = AlertDialog.Builder(this)
-            .setTitle(R.string.link_hint_title)
-            .setMessage(getString(R.string.link_hint_body, host))
-            .setView(view)
-            .setPositiveButton(R.string.link_hint_open_settings) { _, _ -> openLinkSettings() }
-            .setNegativeButton(R.string.link_hint_later, null)
-            .setOnDismissListener {
-                // Read on dismiss, not per-button: the choice should stick whether
-                // they opened settings, tapped Not now, or dismissed the dialog.
-                if (dontShow.isChecked) {
-                    prefs.edit().putBoolean(KEY_LINK_HINT_DISMISSED, true).apply()
-                }
+        lateinit var dontShow: CheckBox
+        val view = showDialog(R.layout.dialog_link_hint, cancelable = true) {
+            // Read on dismiss, not per-button: the choice should stick whether
+            // they opened settings, tapped Not now, or dismissed the card.
+            if (dontShow.isChecked) {
+                prefs.edit().putBoolean(KEY_LINK_HINT_DISMISSED, true).apply()
             }
-            .show()
+        }
+        dontShow = view.findViewById(R.id.linkHintDontShow)
+        view.findViewById<TextView>(R.id.linkHintBody).text = getString(R.string.link_hint_body, host)
+        view.findViewById<View>(R.id.linkHintOpenSettings).setOnClickListener {
+            openLinkSettings()
+            dismissDialog()
+        }
+        view.findViewById<View>(R.id.linkHintLater).setOnClickListener { dismissDialog() }
     }
 
     /**
@@ -814,14 +1075,13 @@ class MainActivity : AppCompatActivity() {
     // long-pressing the loading screen, by cvha://app-settings, or from the panel
     // through CVAppBridge.openAppSettings().
 
-    private var settingsDialog: AlertDialog? = null
     private var refreshSettings: (() -> Unit)? = null
 
     private fun showAppSettings() {
         if (isFinishing || isDestroyed) return
-        if (settingsDialog?.isShowing == true) return
+        if (isDialogShowing()) return
 
-        val view         = layoutInflater.inflate(R.layout.dialog_app_settings, null)
+        val view         = showDialog(R.layout.dialog_app_settings, cancelable = true) { refreshSettings = null }
         val homeRow      = view.findViewById<View>(R.id.settingsHomeRow)
         val homeSwitch   = view.findViewById<SwitchCompat>(R.id.settingsHomeSwitch)
         val homeSubtitle = view.findViewById<TextView>(R.id.settingsHomeSubtitle)
@@ -858,16 +1118,14 @@ class MainActivity : AppCompatActivity() {
         }
         linksRow.setOnClickListener { openLinkSettings() }
         updateRow.setOnClickListener {
-            settingsDialog?.dismiss()      // the update prompt takes it from here
+            dismissDialog()      // the update prompt takes it from here
             checkForUpdate(force = true)
         }
-
-        settingsDialog = AlertDialog.Builder(this)
-            .setTitle(R.string.settings_title)
-            .setView(view)
-            .setNegativeButton(R.string.settings_close, null)
-            .setOnDismissListener { refreshSettings = null }
-            .show()
+        view.findViewById<View>(R.id.settingsClose).setOnClickListener { dismissDialog() }
+        view.findViewById<View>(R.id.settingsSiteLink).setOnClickListener { openExternal(siteUrl()) }
+        view.findViewById<View>(R.id.settingsGithubLink).setOnClickListener {
+            openExternal("https://github.com/${BuildConfig.UPDATE_REPO}")
+        }
     }
 
     private fun setHomeAppOffered(offered: Boolean) {
@@ -899,7 +1157,6 @@ class MainActivity : AppCompatActivity() {
     // the loading screen, and CVAppBridge.checkForUpdate() from the panel.
 
     private var updateJob: Job? = null
-    private var updateDialog: AlertDialog? = null
 
     /** Set while the user is out in Settings granting "install unknown apps". */
     private var awaitingInstallPermission = false
@@ -971,7 +1228,7 @@ class MainActivity : AppCompatActivity() {
         if (!Updater.canInstallPackages(this)) return
         awaitingInstallPermission = false
         val release = pendingRelease() ?: return
-        updateDialog?.takeIf { it.isShowing }?.dismiss()
+        if (isDialogShowing()) dismissDialog()
         beginUpdate(release)
     }
 
@@ -1008,7 +1265,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun promptUpdate(release: Updater.Release) {
-        if (updateDialog?.isShowing == true) return
+        if (isDialogShowing()) return
 
         val body = buildString {
             append(getString(R.string.update_available_body, BuildConfig.VERSION_NAME))
@@ -1018,12 +1275,12 @@ class MainActivity : AppCompatActivity() {
             if (release.notes.isNotBlank()) append("\n\n").append(release.notes)
         }
 
-        updateDialog = AlertDialog.Builder(this)
-            .setTitle(getString(R.string.update_available_title, release.versionName))
-            .setMessage(body)
-            .setPositiveButton(R.string.update_action_install) { _, _ -> beginUpdate(release) }
-            .setNegativeButton(R.string.update_action_later, null)
-            .show()
+        val view = showDialog(R.layout.dialog_update_available, cancelable = true)
+        view.findViewById<TextView>(R.id.updateTitle).text =
+            getString(R.string.update_available_title, release.versionName)
+        view.findViewById<TextView>(R.id.updateBody).text = body
+        view.findViewById<View>(R.id.updateInstall).setOnClickListener { beginUpdate(release) }
+        view.findViewById<View>(R.id.updateLater).setOnClickListener { dismissDialog() }
     }
 
     private fun beginUpdate(release: Updater.Release) {
@@ -1037,17 +1294,13 @@ class MainActivity : AppCompatActivity() {
         }
         awaitingInstallPermission = false
 
-        val view     = layoutInflater.inflate(R.layout.dialog_update_progress, null)
+        val view     = showDialog(R.layout.dialog_update_progress, cancelable = false)
         val progress = view.findViewById<ProgressBar>(R.id.updateProgressBar)
         val label    = view.findViewById<TextView>(R.id.updateProgressLabel)
-
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(R.string.update_downloading)
-            .setView(view)
-            .setCancelable(false)
-            .setNegativeButton(android.R.string.cancel) { _, _ -> updateJob?.cancel() }
-            .show()
-        updateDialog = dialog
+        view.findViewById<View>(R.id.updateProgressCancel).setOnClickListener {
+            updateJob?.cancel()
+            dismissDialog()
+        }
 
         updateJob = activityScope.launch {
             // onProgress arrives on the IO thread doing the reading.
@@ -1063,26 +1316,25 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
-            dialog.dismiss()
+            dismissDialog()
             if (apk == null) toast(getString(R.string.update_download_failed))
             else launchInstaller(apk)
         }
     }
 
     private fun promptInstallPermission() {
-        updateDialog = AlertDialog.Builder(this)
-            .setTitle(R.string.update_needs_permission_title)
-            .setMessage(R.string.update_needs_permission_body)
-            .setPositiveButton(R.string.update_open_settings) { _, _ ->
-                runCatching { startActivity(Updater.unknownSourcesSettingsIntent(this)) }
-            }
-            // Backing out here ends this attempt, so a grant made later for some
-            // unrelated reason doesn't start a download nobody asked for. The
-            // update itself stays remembered and is offered again next launch.
-            .setNegativeButton(R.string.update_action_later) { _, _ ->
-                awaitingInstallPermission = false
-            }
-            .show()
+        val view = showDialog(R.layout.dialog_install_permission, cancelable = true) {
+            // Backing out here (any way — button, outside tap, back) ends this
+            // attempt, so a grant made later for some unrelated reason doesn't
+            // start a download nobody asked for. The update itself stays
+            // remembered and is offered again next launch.
+            awaitingInstallPermission = false
+        }
+        view.findViewById<View>(R.id.installPermOpenSettings).setOnClickListener {
+            runCatching { startActivity(Updater.unknownSourcesSettingsIntent(this)) }
+            dismissDialog()
+        }
+        view.findViewById<View>(R.id.installPermLater).setOnClickListener { dismissDialog() }
     }
 
     private fun launchInstaller(apk: File) {
@@ -1169,7 +1421,20 @@ class MainActivity : AppCompatActivity() {
     private fun showSwitchEmoji(pending: Boolean) {
         switchLocalColumn.alpha = 0.5f;  switchLocalColumn.scaleX = 0.88f;  switchLocalColumn.scaleY = 0.88f
         switchRemoteColumn.alpha = 0.5f; switchRemoteColumn.scaleX = 0.88f; switchRemoteColumn.scaleY = 0.88f
+        // Reset to the neutral "which side" glyph — setSwitchStage() only takes
+        // over once connectRemote() actually starts the VPN handshake.
+        switchRemoteEmoji.text = "☁️"
         updateStatus(if (pending) "Finding connection..." else "Switching...")
+    }
+
+    /** Key → closed lock → open lock, driven by connectRemote()'s own stages — see there. */
+    private enum class SwitchStage(val emoji: String) {
+        KEY("🔑"), LOCK_CLOSED("🔒"), LOCK_OPEN("🔓")
+    }
+
+    private fun setSwitchStage(stage: SwitchStage) {
+        switchRemoteEmoji.text = stage.emoji
+        switchRemoteColumn.animate().alpha(1f).scaleX(1.15f).scaleY(1.15f).setDuration(220).start()
     }
 
     private fun revealSwitchEmoji(to: HaTarget) {
@@ -1195,11 +1460,14 @@ class MainActivity : AppCompatActivity() {
     // network handoff). Only once failures persist do we surface the retry hint —
     // the loading screen itself never changes into a scary "error screen".
 
-    private fun enterTrouble(code: Int) {
+    private fun enterTrouble(code: Int, keepStatus: Boolean = false) {
         consecutiveFailures++
         hideSwitchEmoji()
         if (!loadingVisible) showLoading()
-        updateStatus(troubleMessage(code))
+        // connectRemote() already leaves a specific status behind (which step
+        // failed, or that the user cancelled) — the generic fallback would
+        // only make VPN failures less informative than every other error path.
+        if (!keepStatus) updateStatus(troubleMessage(code))
 
         val persistent = consecutiveFailures > SILENT_RETRY_ATTEMPTS
         if (persistent) showRetryHint() else hideRetryHint()
@@ -1231,6 +1499,11 @@ class MainActivity : AppCompatActivity() {
 
     @Deprecated("Deprecated in API 33")
     override fun onBackPressed() {
+        // A system AlertDialog used to swallow Back on its own; a plain view
+        // in our own hierarchy doesn't, so this card needs its own handling —
+        // dismiss if the card allows it, otherwise swallow the press entirely
+        // (matches setCancelable(false) on the dialogs that used to set it).
+        activeDialog?.let { if (it.cancelable) dismissDialog(); return }
         when {
             webView.canGoBack() -> webView.goBack()
             // As the home screen there is nothing behind us. Finishing would just

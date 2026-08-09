@@ -9,6 +9,13 @@
          "install unknown apps" to this app once, in Settings. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!-- REMOTE is WireGuard-only (no more browser-style login portal) — see
+         VpnManager.kt. FOREGROUND_SERVICE is what lets the tunnel survive the
+         app leaving the foreground; Android already shows its own persistent
+         "VPN connected" indicator regardless, that part can't be suppressed. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
@@ -97,6 +104,18 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity-alias>
+
+        <!-- The tunnel library's own VpnService — GoBackend binds to this under the
+             hood, CVapp never subclasses or calls it directly. -->
+        <service
+            android:name="com.wireguard.android.backend.GoBackend$VpnService"
+            android:permission="android.permission.BIND_VPN_SERVICE"
+            android:foregroundServiceType="specialUse"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.net.VpnService" />
+            </intent-filter>
+        </service>
 
         <!-- Hands the downloaded APK to the system installer. Not exported: only
              this app may query it, and the installer gets in on a per-Intent
