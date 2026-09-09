@@ -20,8 +20,17 @@
         android:id="@+id/loadingView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="#FF121212"
+        android:background="#FF0D0D0B"
         android:visibility="visible">
+
+        <!-- The same drifting constellation as coyotes.vision and the dashboard,
+             drawn natively so the app's own screens don't stop looking like the
+             house the moment the WebView isn't up yet. See ConstellationView. -->
+        <com.cvapp.ConstellationView
+            android:id="@+id/loadingSky"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#FF0D0D0B" />
 
         <LinearLayout
             android:id="@+id/switchLocalColumn"
@@ -83,12 +92,16 @@
 
         </LinearLayout>
 
+        <!-- Full width, not wrap_content: everything in here is centred anyway,
+             and a column only as wide as the title wraps the log lines in half. -->
         <LinearLayout
-            android:layout_width="wrap_content"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
             android:orientation="vertical"
-            android:gravity="center">
+            android:gravity="center"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp">
 
             <ImageView
                 android:id="@+id/loadingLogo"
@@ -130,14 +143,15 @@
                 android:layout_marginBottom="16dp"
                 android:alpha="0" />
 
-            <TextView
-                android:id="@+id/loadingStatus"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Starting..."
-                android:textColor="#FF666666"
-                android:textSize="12sp"
-                android:letterSpacing="0.03"
+            <!-- The connect log. Fixed height on purpose: lines arrive one at a
+                 time and everything below would walk down the screen otherwise.
+                 Filled by MainActivity.step(), four lines at most. -->
+            <LinearLayout
+                android:id="@+id/loadingLog"
+                android:layout_width="match_parent"
+                android:layout_height="86dp"
+                android:orientation="vertical"
+                android:gravity="top|center_horizontal"
                 android:alpha="0" />
 
             <!-- The address actually being dialled. "Connecting locally" above
@@ -216,6 +230,8 @@
             android:layout_marginStart="28dp"
             android:layout_marginEnd="28dp"
             android:background="@drawable/dialog_card_bg"
+            android:outlineProvider="background"
+            android:clipToOutline="true"
             android:elevation="8dp"
             android:clickable="true"
             android:focusable="true" />

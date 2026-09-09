@@ -11,13 +11,15 @@ import java.net.URL
  * failures all just mean "not reachable".
  */
 object HaProbe {
+    // Long enough to answer "is this the home Wi-Fi" without making anyone wait
+    // for it. A tunnel wants longer — see the callers.
     private const val TIMEOUT_MS = 700
 
-    suspend fun isReachable(url: String): Boolean = withContext(Dispatchers.IO) {
+    suspend fun isReachable(url: String, timeoutMs: Int = TIMEOUT_MS): Boolean = withContext(Dispatchers.IO) {
         runCatching {
             val conn = URL(url).openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_MS
-            conn.readTimeout = TIMEOUT_MS
+            conn.connectTimeout = timeoutMs
+            conn.readTimeout = timeoutMs
             conn.requestMethod = "GET"
             conn.instanceFollowRedirects = false
             try {

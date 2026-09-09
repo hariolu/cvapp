@@ -32,6 +32,7 @@ class SecureStore(context: Context) {
         private const val KEY_ALIAS  = "cvapp_vpn_secret_key"
         private const val TRANSFORM  = "AES/GCM/NoPadding"
         private const val GCM_TAG_BITS = 128
+        private const val KEY_LAST_REFRESH = "vpn_last_refresh"
     }
 
     private val secretKey: SecretKey by lazy {
@@ -68,9 +69,13 @@ class SecureStore(context: Context) {
         String(cipher.doFinal(ciphertext), Charsets.UTF_8)
     }.getOrNull()
 
+    // commit(), not apply(). Everything written through here is the difference
+    // between walking back into the app and being sent to the bot for a code,
+    // and apply() only promises the write happens eventually. A few milliseconds
+    // a handful of times a month is not a price worth arguing about.
     private fun put(key: String, value: String?) {
-        if (value == null) { prefs.edit().remove(key).apply(); return }
-        prefs.edit().putString(key, encrypt(value)).apply()
+        if (value == null) { prefs.edit().remove(key).commit(); return }
+        prefs.edit().putString(key, encrypt(value)).commit()
     }
 
     private fun get(key: String): String? =
@@ -111,11 +116,47 @@ class SecureStore(context: Context) {
         get() = prefs.getString("vpn_lan_cidr", null)
         set(v) = prefs.edit().putString("vpn_lan_cidr", v).apply()
 
+    /**
+     * A whole session in one editor and one commit.
+     *
+     * Six separate writes can be interrupted between any two of them, and a
+     * device left holding a new token beside a stale endpoint is worse off than
+     * one holding neither: [hasPeer] would say yes to a set of values that never
+     * belonged together.
+     */
+    fun save(config: CvAuthApi.VpnConfig) {
+        prefs.edit()
+            .putString("vpn_refresh_token", encrypt(config.refreshToken))
+            .putString("vpn_server_pubkey", config.serverPubkey)
+            .putString("vpn_endpoint",      config.endpoint)
+            .putString("vpn_tunnel_ip",     config.tunnelIp)
+            .putString("vpn_tunnel_host",   config.tunnelHost)
+            .putString("vpn_lan_cidr",      config.lanCidr)
+            .putLong(KEY_LAST_REFRESH, System.currentTimeMillis())
+            .commit()
+    }
+
+    /**
+     * How long since cv-auth last vouched for this session.
+     *
+     * [Long.MAX_VALUE] when that cannot be known — an install updated into this
+     * version holds a token but no note of when it was last renewed, and a clock
+     * that has moved backwards makes the stored moment look like the future.
+     * Neither is a young session; both should renew at the first chance.
+     */
+    fun sessionAgeMs(): Long {
+        val last = prefs.getLong(KEY_LAST_REFRESH, 0L)
+        if (last <= 0L) return Long.MAX_VALUE
+        val age = System.currentTimeMillis() - last
+        return if (age < 0L) Long.MAX_VALUE else age
+    }
+
     fun hasPeer(): Boolean = wgPrivateKey != null && refreshToken != null && serverPubkey != null
 
     fun clearSession() {
         // Deliberately keeps wgPrivateKey — the device identity survives a
         // revoked/expired session; only bootstrap ever needs to replace it.
         refreshToken = null
+        prefs.edit().remove(KEY_LAST_REFRESH).commit()
     }
 }

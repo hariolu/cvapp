@@ -1,138 +1,163 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Full content of the VPN sign-in card — this view owns the whole
-     presentation (mirrors the standalone login.coyotes.vision page this
-     replaces, minus the parts a native app doesn't need — see
-     MainActivity.awaitOtpCode). Hosted in dialogCard, not a system dialog. -->
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- The remote sign-in screen. Full-bleed rather than a card: this is the one
+     screen that stands alone — nothing behind it is usable until it is answered
+     — and a small panel floating over a dimmed dashboard undersold that.
+
+     Shown through MainActivity.showDialog(fullScreen = true), which lends the
+     shared dialog host the whole window for the occasion. The constellation is
+     the same one the loading screen and coyotes.vision use; see
+     ConstellationView. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content">
+    android:layout_height="match_parent">
 
-    <LinearLayout
+    <com.cvapp.ConstellationView
+        android:id="@+id/otpSky"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:gravity="center_horizontal"
-        android:paddingStart="24dp"
-        android:paddingEnd="24dp"
-        android:paddingTop="26dp"
-        android:paddingBottom="8dp">
+        android:layout_height="match_parent"
+        android:background="#FF0D0D0B" />
 
-        <ImageView
-            android:layout_width="56dp"
-            android:layout_height="56dp"
-            android:src="@drawable/logo"
-            android:contentDescription="@null" />
-
-        <TextView
-            android:id="@+id/otpBrand"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="14dp"
-            android:padding="4dp"
-            android:text="@string/otp_brand"
-            android:textColor="#FFFFFFFF"
-            android:textSize="17sp"
-            android:textStyle="bold"
-            android:clickable="true"
-            android:focusable="true"
-            android:background="?attr/selectableItemBackground" />
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="2dp"
-            android:text="@string/otp_tagline"
-            android:textColor="#FF888888"
-            android:textSize="12sp" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:text="@string/otp_body"
-            android:textColor="#FFCCCCCC"
-            android:textSize="13sp"
-            android:lineSpacingExtra="3dp"
-            android:gravity="center" />
-
-        <TextView
-            android:id="@+id/otpOpenBot"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:padding="8dp"
-            android:text="@string/otp_open_bot"
-            android:textColor="#FF8B9FF4"
-            android:textSize="13sp"
-            android:textStyle="bold"
-            android:clickable="true"
-            android:focusable="true"
-            android:background="?attr/selectableItemBackground" />
-
-        <EditText
-            android:id="@+id/otpCodeInput"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="18dp"
-            android:inputType="number"
-            android:maxLength="6"
-            android:gravity="center"
-            android:textSize="26sp"
-            android:textColor="#FFFFFFFF"
-            android:letterSpacing="0.35"
-            android:hint="@string/otp_hint"
-            android:textColorHint="#FF3D3D3D"
-            android:background="@drawable/otp_input_bg"
-            android:padding="12dp"
-            android:importantForAutofill="no" />
-
-        <TextView
-            android:id="@+id/otpStatus"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="10dp"
-            android:textSize="12sp"
-            android:gravity="center"
-            android:visibility="gone" />
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:fillViewport="true"
+        android:scrollbars="none">
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="end"
-            android:layout_marginTop="20dp">
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingStart="32dp"
+            android:paddingEnd="32dp"
+            android:paddingTop="24dp"
+            android:paddingBottom="24dp">
+
+            <ImageView
+                android:id="@+id/otpLogo"
+                android:layout_width="168dp"
+                android:layout_height="168dp"
+                android:src="@drawable/logo"
+                android:scaleType="fitCenter"
+                android:contentDescription="@null" />
 
             <TextView
-                android:id="@+id/otpCancel"
+                android:id="@+id/otpBrand"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/otp_cancel"
-                android:textColor="#FF888888"
-                android:textSize="14sp"
+                android:layout_marginTop="20dp"
+                android:padding="4dp"
+                android:text="@string/otp_brand"
+                android:textColor="#FFFFFFFF"
+                android:textSize="27sp"
                 android:textStyle="bold"
-                android:padding="12dp"
-                android:layout_marginEnd="4dp"
+                android:letterSpacing="0.01"
                 android:clickable="true"
                 android:focusable="true"
                 android:background="?attr/selectableItemBackground" />
 
             <TextView
-                android:id="@+id/otpSubmit"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="@string/otp_submit"
-                android:textColor="#FF111111"
+                android:layout_marginTop="4dp"
+                android:text="@string/otp_tagline"
+                android:textColor="#FF9A8455"
+                android:textSize="13sp"
+                android:letterSpacing="0.12" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="34dp"
+                android:text="@string/otp_body"
+                android:textColor="#FFCCCCCC"
+                android:textSize="14sp"
+                android:lineSpacingExtra="4dp"
+                android:gravity="center" />
+
+            <TextView
+                android:id="@+id/otpOpenBot"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:padding="10dp"
+                android:text="@string/otp_open_bot"
+                android:textColor="#FF8B9FF4"
                 android:textSize="14sp"
                 android:textStyle="bold"
-                android:paddingStart="22dp"
-                android:paddingEnd="22dp"
-                android:paddingTop="12dp"
-                android:paddingBottom="12dp"
                 android:clickable="true"
                 android:focusable="true"
-                android:background="@drawable/dialog_button_primary_bg" />
+                android:background="?attr/selectableItemBackground" />
+
+            <EditText
+                android:id="@+id/otpCodeInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="24dp"
+                android:inputType="number"
+                android:maxLength="6"
+                android:gravity="center"
+                android:textSize="30sp"
+                android:textColor="#FFFFFFFF"
+                android:letterSpacing="0.35"
+                android:hint="@string/otp_hint"
+                android:textColorHint="#FF3D3D3D"
+                android:background="@drawable/otp_input_bg"
+                android:padding="16dp"
+                android:importantForAutofill="no" />
+
+            <TextView
+                android:id="@+id/otpStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:textSize="13sp"
+                android:gravity="center"
+                android:visibility="gone" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:layout_marginTop="28dp">
+
+                <TextView
+                    android:id="@+id/otpCancel"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/otp_cancel"
+                    android:textColor="#FF888888"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    android:paddingStart="20dp"
+                    android:paddingEnd="20dp"
+                    android:paddingTop="14dp"
+                    android:paddingBottom="14dp"
+                    android:layout_marginEnd="10dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:background="?attr/selectableItemBackground" />
+
+                <TextView
+                    android:id="@+id/otpSubmit"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/otp_submit"
+                    android:textColor="#FF111111"
+                    android:textSize="15sp"
+                    android:textStyle="bold"
+                    android:paddingStart="34dp"
+                    android:paddingEnd="34dp"
+                    android:paddingTop="14dp"
+                    android:paddingBottom="14dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:background="@drawable/dialog_button_primary_bg" />
+
+            </LinearLayout>
 
         </LinearLayout>
+    </ScrollView>
 
-    </LinearLayout>
-</ScrollView>
+</FrameLayout>

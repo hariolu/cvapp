@@ -16,8 +16,10 @@ import android.os.Handler
 import android.os.Looper
 import android.os.Message
 import android.provider.Settings
+import android.view.Gravity
 import android.view.View
 import android.view.animation.AccelerateDecelerateInterpolator
+import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
 import android.webkit.*
 import android.widget.CheckBox
@@ -41,6 +43,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
@@ -56,7 +59,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var loadingLogo: ImageView
     private lateinit var loadingTitle: TextView
     private lateinit var loadingSubtitle: TextView
-    private lateinit var loadingStatus: TextView
+    private lateinit var loadingLog: LinearLayout
     private lateinit var loadingEndpoint: TextView
     private lateinit var loadingBrand: TextView
     private lateinit var loadingVersion: TextView
@@ -95,6 +98,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var dialogCard: FrameLayout
     private var activeDialog: ActiveDialog? = null
 
+    // The host's ordinary shape, kept from the layout so a full-screen dialog can
+    // hand it back afterwards — one slot serves every card in the app.
+    private var cardMarginStart = 0
+    private var cardMarginEnd   = 0
+    private var cardBackground: android.graphics.drawable.Drawable? = null
+    private var cardElevation   = 0f
+
     private var currentTarget: HaTarget? = null
 
     // Set in onStop() when it tears down an active REMOTE tunnel, so onStart()
@@ -124,6 +134,22 @@ class MainActivity : AppCompatActivity() {
         private const val SILENT_RETRY_DELAY_MS = 1_200L
         private const val INITIAL_BACKOFF_MS    = 3_000L
         private const val MAX_BACKOFF_MS        = 15_000L
+
+        // ── Keeping the remote session ───────────────────────────────────────
+        // cv-auth expires a session a month after it last heard from it, and it
+        // slides on every renewal. Two days keeps it far from that edge without
+        // asking anything of the network on most opens: a session younger than
+        // this is simply used, tunnel first.
+        private const val RENEW_AFTER_MS          = 2L * 24 * 60 * 60 * 1000
+        private const val RENEW_ATTEMPTS          = 3
+        private const val RENEW_RETRY_DELAY_MS    = 1_500L
+        // "Interface up" is not "packets arrive" — see raiseTunnel().
+        private const val TUNNEL_PROBE_ATTEMPTS   = 3
+        private const val TUNNEL_PROBE_DELAY_MS   = 700L
+        private const val TUNNEL_PROBE_TIMEOUT_MS = 2_500
+
+        /** How many lines of the connect log stay on screen. */
+        private const val LOG_LINES = 4
 
         private const val KEY_LAST_PATH          = "last_ha_path"
         private const val KEY_LAST_UPDATE_CHECK  = "last_update_check"
@@ -225,7 +251,7 @@ class MainActivity : AppCompatActivity() {
         loadingLogo        = findViewById(R.id.loadingLogo)
         loadingTitle       = findViewById(R.id.loadingTitle)
         loadingSubtitle    = findViewById(R.id.loadingSubtitle)
-        loadingStatus      = findViewById(R.id.loadingStatus)
+        loadingLog         = findViewById(R.id.loadingLog)
         loadingEndpoint    = findViewById(R.id.loadingEndpoint)
         loadingBrand       = findViewById(R.id.loadingBrand)
         loadingVersion     = findViewById(R.id.loadingVersion)
@@ -236,6 +262,12 @@ class MainActivity : AppCompatActivity() {
         switchRemoteEmoji  = findViewById(R.id.switchRemoteEmoji)
         dialogScrim        = findViewById(R.id.dialogScrim)
         dialogCard         = findViewById(R.id.dialogCard)
+        (dialogCard.layoutParams as FrameLayout.LayoutParams).let {
+            cardMarginStart = it.marginStart
+            cardMarginEnd   = it.marginEnd
+        }
+        cardBackground = dialogCard.background
+        cardElevation  = dialogCard.elevation
 
         loadingVersion.text = "v${runCatching {
             packageManager.getPackageInfo(packageName, 0).versionName
@@ -464,7 +496,7 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageStarted(view: WebView, url: String, fav: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, fav)
-                updateStatus("Loading...")
+                step("🌐", "Loading...")
             }
 
             override fun onPageFinished(view: WebView, url: String) {
@@ -753,7 +785,9 @@ class MainActivity : AppCompatActivity() {
                 // A network blip could otherwise leave connectRemote() (and its
                 // OTP dialog) running in the background while LOCAL loads.
                 connectJob?.cancel()
-                updateStatus("Connecting locally...")
+                step("🏠", "Connecting locally...")
+                // Being home is the safest moment to renew the way out of it.
+                keepSessionWarm()
                 // Same URL as REMOTE (see haUrl()) — a second origin here is what
                 // used to make HA ask to sign in again after every Wi-Fi⇄tunnel
                 // switch, since hassTokens lives in localStorage, which is scoped
@@ -811,7 +845,12 @@ class MainActivity : AppCompatActivity() {
      * button clicks — closing always goes through dismissDialog(), whichever
      * button or gesture triggers it.
      */
-    private fun showDialog(layoutRes: Int, cancelable: Boolean = true, onDismiss: (() -> Unit)? = null): View {
+    private fun showDialog(
+        layoutRes: Int,
+        cancelable: Boolean = true,
+        fullScreen: Boolean = false,
+        onDismiss: (() -> Unit)? = null,
+    ): View {
         // Cancel first: a ViewPropertyAnimator's withEndAction still fires on
         // cancel(), synchronously, so this clears out any dialog mid-dismiss
         // before we touch the card ourselves — see dismissDialog().
@@ -819,6 +858,8 @@ class MainActivity : AppCompatActivity() {
         dialogCard.animate().cancel()
         dialogCard.removeAllViews()
         activeDialog = null
+
+        shapeCard(fullScreen)
 
         val view = layoutInflater.inflate(layoutRes, dialogCard, false)
         dialogCard.addView(view)
@@ -828,16 +869,41 @@ class MainActivity : AppCompatActivity() {
         dialogScrim.alpha = 0f
         dialogScrim.animate().alpha(1f).setDuration(200).start()
         dialogCard.alpha = 0f
-        dialogCard.scaleX = 0.88f
-        dialogCard.scaleY = 0.88f
+        // A card can afford to spring in. A whole screen doing the same reads as
+        // the app lurching, so it only rises.
+        val from = if (fullScreen) 0.97f else 0.88f
+        dialogCard.scaleX = from
+        dialogCard.scaleY = from
         dialogCard.animate().alpha(1f).scaleX(1f).scaleY(1f)
-            .setDuration(260).setInterpolator(OvershootInterpolator(1.6f)).start()
+            .setDuration(if (fullScreen) 300 else 260)
+            .setInterpolator(if (fullScreen) DecelerateInterpolator() else OvershootInterpolator(1.6f))
+            .start()
 
         // Tapping the card itself must not fall through to the scrim below it.
         dialogCard.setOnClickListener { }
         dialogScrim.setOnClickListener { if (cancelable) dismissDialog() }
 
         return view
+    }
+
+    /**
+     * Lends the shared host the whole window, or takes it back.
+     *
+     * Full screen means no card at all: no margins, no rounded plate, no lift off
+     * the surface — the inflated layout paints edge to edge and brings its own
+     * background. Everything else keeps the plate, so the values it is given back
+     * are the ones the layout started with rather than numbers repeated here.
+     */
+    private fun shapeCard(fullScreen: Boolean) {
+        val params = dialogCard.layoutParams as FrameLayout.LayoutParams
+        params.height = if (fullScreen) FrameLayout.LayoutParams.MATCH_PARENT
+        else FrameLayout.LayoutParams.WRAP_CONTENT
+        params.marginStart = if (fullScreen) 0 else cardMarginStart
+        params.marginEnd   = if (fullScreen) 0 else cardMarginEnd
+        dialogCard.layoutParams = params
+        dialogCard.background    = if (fullScreen) null else cardBackground
+        dialogCard.elevation     = if (fullScreen) 0f else cardElevation
+        dialogCard.clipToOutline = !fullScreen
     }
 
     private fun dismissDialog() {
@@ -862,62 +928,145 @@ class MainActivity : AppCompatActivity() {
         if (vpnManager.currentState() == Tunnel.State.UP) return true
 
         setSwitchStage(SwitchStage.KEY)
-        updateStatus("Checking access...")
+        step("🔑", "Checking access...")
 
-        val hadSession = secureStore.hasPeer()
-        var connected = false
-        if (hadSession) {
-            when (val r = CvAuthApi.refresh(secureStore.refreshToken!!)) {
-                is CvAuthApi.Result.Ok -> { applyVpnConfig(r.config); connected = true }
-                is CvAuthApi.Result.Failed -> updateStatus("Session expired — sign in again")
-            }
-        }
-
-        if (!connected) {
-            if (hadSession) secureStore.clearSession()   // stale token must not be retried as-is
-            val code = awaitOtpCode()
-            if (code == null) {
-                updateStatus("Sign-in cancelled")
-                return false
-            }
-            updateStatus("Verifying code...")
-            val pubkey = vpnManager.ensureKeyPair(secureStore)
-            when (val r = CvAuthApi.bootstrap(code, pubkey)) {
-                is CvAuthApi.Result.Ok -> applyVpnConfig(r.config)
-                is CvAuthApi.Result.Failed -> {
-                    updateStatus("Sign-in failed: ${r.message}")
-                    toast(r.message)
-                    return false
-                }
-            }
-        }
+        // OFFLINE is not one of the answers here: with nothing forcing it, an
+        // unreachable cv-auth leaves us holding what we already had, and what we
+        // already had is enough to try the tunnel with.
+        var access = ensureSession()
+        if (access == Access.NEEDS_CODE && !signInWithCode()) return false
 
         setSwitchStage(SwitchStage.LOCK_CLOSED)
-        updateStatus("Requesting VPN permission...")
+        step("🛡️", "Requesting VPN permission...")
         if (!ensureVpnPermission()) {
-            updateStatus("VPN permission denied")
+            step("⛔", "VPN permission denied")
             return false
         }
 
-        updateStatus("Establishing tunnel...")
-        if (vpnManager.up(secureStore).isFailure) {
-            updateStatus("Home is offline, retrying...")
-            return false
+        if (!raiseTunnel()) {
+            // The config we hold no longer carries traffic. Nearly always that
+            // means it has moved on without us — a hub that forgot the peer, a
+            // house on a new address — and a renewal is exactly what fetches the
+            // replacement. Worth one forced try before anybody is sent to the bot
+            // for a code they probably do not need.
+            access = ensureSession(force = true)
+            if (access == Access.NEEDS_CODE && !signInWithCode()) return false
+            if (access == Access.OFFLINE || !raiseTunnel()) {
+                step("📡", "Home is offline, retrying...")
+                return false
+            }
         }
 
         setSwitchStage(SwitchStage.LOCK_OPEN)
-        updateStatus("Tunnel up, loading dashboard...")
+        step("✅", "Tunnel up, loading dashboard...")
         return true
     }
 
-    private fun applyVpnConfig(config: CvAuthApi.VpnConfig) {
-        secureStore.refreshToken = config.refreshToken
-        secureStore.serverPubkey = config.serverPubkey
-        secureStore.endpoint     = config.endpoint
-        secureStore.tunnelIp     = config.tunnelIp
-        secureStore.tunnelHost   = config.tunnelHost
-        secureStore.lanCidr      = config.lanCidr
+    /** What standing we have with cv-auth right now. */
+    private enum class Access { READY, NEEDS_CODE, OFFLINE }
+
+    /**
+     * The session, renewed if it is old enough to be worth renewing.
+     *
+     * The tunnel does not need cv-auth to come up — the config it handed over
+     * last time is all WireGuard uses, and cv-auth plays no part in a handshake.
+     * Asking it on every single open therefore staked a perfectly good session on
+     * a round trip made at the flakiest moment of the day: the one where you have
+     * just walked out of the house and the phone is still arguing about which
+     * network it is on. So a young session is simply used, and only [force] — the
+     * tunnel having actually failed — insists on an answer.
+     */
+    private suspend fun ensureSession(force: Boolean = false): Access {
+        if (!secureStore.hasPeer()) return Access.NEEDS_CODE
+        if (!force && secureStore.sessionAgeMs() < RENEW_AFTER_MS) return Access.READY
+
+        return when (val result = renewSession()) {
+            is CvAuthApi.Result.Ok -> { applyVpnConfig(result.config); Access.READY }
+            // cv-auth says this token is dead. It is the only thing that can say so.
+            is CvAuthApi.Result.Rejected -> {
+                step("⏳", "Session expired — sign in again")
+                secureStore.clearSession()
+                Access.NEEDS_CODE
+            }
+            // Silence says nothing about the session, so nothing is thrown away.
+            // What we already hold is still the best thing we have.
+            is CvAuthApi.Result.Unreachable -> if (force) Access.OFFLINE else Access.READY
+        }
     }
+
+    /** One renewal, retried past the blips a handover throws at it. */
+    private suspend fun renewSession(): CvAuthApi.Result {
+        val token = secureStore.refreshToken
+            ?: return CvAuthApi.Result.Rejected(0, "No session")
+        step("🔄", "Renewing access...")
+        var last: CvAuthApi.Result = CvAuthApi.Result.Unreachable("Network error")
+        repeat(RENEW_ATTEMPTS) { attempt ->
+            if (attempt > 0) delay(RENEW_RETRY_DELAY_MS)
+            last = CvAuthApi.refresh(token)
+            if (last !is CvAuthApi.Result.Unreachable) return last
+        }
+        return last
+    }
+
+    /**
+     * Six digits from the bot, exchanged for a peer. Only ever reached when there
+     * is nothing left to renew — the whole flow above exists to keep it that way.
+     */
+    private suspend fun signInWithCode(): Boolean {
+        val code = awaitOtpCode()
+        if (code == null) {
+            step("✋", "Sign-in cancelled")
+            return false
+        }
+        step("🔢", "Verifying code...")
+        val pubkey = vpnManager.ensureKeyPair(secureStore)
+        return when (val result = CvAuthApi.bootstrap(code, pubkey)) {
+            is CvAuthApi.Result.Ok -> { applyVpnConfig(result.config); true }
+            is CvAuthApi.Result.Failed -> {
+                step("⛔", "Sign-in failed: ${result.message}")
+                toast(result.message)
+                false
+            }
+        }
+    }
+
+    /**
+     * Brings the tunnel up and proves something travels through it.
+     *
+     * setState(UP) only means the interface exists. A peer the hub has forgotten
+     * looks exactly like a working tunnel from this side until something is asked
+     * to cross it, and the app would sit there reloading a page that could never
+     * arrive.
+     */
+    private suspend fun raiseTunnel(): Boolean {
+        step("🔒", "Establishing tunnel...")
+        if (vpnManager.up(secureStore).isFailure) return false
+        repeat(TUNNEL_PROBE_ATTEMPTS) { attempt ->
+            if (attempt > 0) delay(TUNNEL_PROBE_DELAY_MS)
+            if (HaProbe.isReachable(haUrl(), TUNNEL_PROBE_TIMEOUT_MS)) return true
+        }
+        vpnManager.down()
+        return false
+    }
+
+    /**
+     * Keeps the remote session warm from inside the house.
+     *
+     * A session dies of silence, and the only thing that ever spoke to cv-auth
+     * was the remote path — so a month of evenings at home was enough to be sent
+     * to the bot on the first evening out. Nothing waits on this and nothing is
+     * discarded if it fails: at worst the session stays exactly as old as it was.
+     */
+    private fun keepSessionWarm() {
+        if (!secureStore.hasPeer()) return
+        if (secureStore.sessionAgeMs() < RENEW_AFTER_MS) return
+        val token = secureStore.refreshToken ?: return
+        activityScope.launch {
+            (CvAuthApi.refresh(token) as? CvAuthApi.Result.Ok)?.let { applyVpnConfig(it.config) }
+        }
+    }
+
+    private fun applyVpnConfig(config: CvAuthApi.VpnConfig) = secureStore.save(config)
 
     private suspend fun ensureVpnPermission(): Boolean {
         val intent = vpnManager.permissionIntent() ?: return true
@@ -939,7 +1088,7 @@ class MainActivity : AppCompatActivity() {
             if (isFinishing || isDestroyed) { cont.resume(null); return@post }
 
             var resumed = false
-            val view = showDialog(R.layout.dialog_otp, cancelable = true) {
+            val view = showDialog(R.layout.dialog_otp, cancelable = true, fullScreen = true) {
                 if (!resumed) { resumed = true; cont.resume(null) }
             }
             val input = view.findViewById<EditText>(R.id.otpCodeInput)
@@ -1353,6 +1502,9 @@ class MainActivity : AppCompatActivity() {
     // ── View state ────────────────────────────────────────────────────────────
 
     private fun showLoading() {
+        // A fresh attempt starts a fresh log; a switch or a retry while the
+        // screen is already up is the same attempt continuing.
+        if (!loadingVisible) clearLog()
         loadingVisible = true
         // Keep WebView VISIBLE at alpha=0 — INVISIBLE releases the GPU surface,
         // which causes a black flash when the surface is recreated on next show.
@@ -1376,7 +1528,57 @@ class MainActivity : AppCompatActivity() {
         webView.animate().alpha(1f).setDuration(350).start()
     }
 
-    private fun updateStatus(msg: String) { loadingStatus.text = msg }
+    // ── The connect log ───────────────────────────────────────────────────────
+    // One line per thing that actually happened, newest at the bottom, the ones
+    // above it stepping back. It replaces a single status line that overwrote
+    // itself: on a slow connection that line was the only thing moving on the
+    // screen, and it never said what had already worked.
+
+    private fun step(emoji: String, text: String) {
+        val newest = loadingLog.getChildAt(loadingLog.childCount - 1) as? TextView
+        // The retry loop says "Reconnecting..." every few seconds, and a log
+        // that repeats itself is a slower way of saying nothing.
+        if (newest?.tag == text) { repeatLine(newest); return }
+
+        val dp = resources.displayMetrics.density
+        val line = TextView(this).apply {
+            tag = text
+            this.text = "$emoji  $text"
+            setTextColor(0xFFBFBFBF.toInt())
+            textSize = 12.5f
+            letterSpacing = 0.02f
+            gravity = Gravity.CENTER_HORIZONTAL
+            alpha = 0f
+            translationY = 8f * dp
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = (3 * dp).toInt() }
+        }
+        loadingLog.addView(line)
+        while (loadingLog.childCount > LOG_LINES) loadingLog.removeViewAt(0)
+        line.animate().alpha(1f).translationY(0f).setDuration(220).start()
+        dimOlderLines()
+    }
+
+    /** The newest line reads at full strength; everything above it recedes. */
+    private fun dimOlderLines() {
+        val fades = floatArrayOf(1f, 0.5f, 0.32f, 0.2f)
+        for (index in 0 until loadingLog.childCount - 1) {
+            val fromEnd = loadingLog.childCount - 1 - index
+            val view = loadingLog.getChildAt(index)
+            view.animate().alpha(fades.getOrElse(fromEnd) { 0.15f }).setDuration(220).start()
+        }
+    }
+
+    /** Said again: worth a flicker, not a new line. */
+    private fun repeatLine(line: TextView) {
+        line.animate().cancel()
+        line.alpha = 0.55f
+        line.animate().alpha(1f).setDuration(280).start()
+    }
+
+    private fun clearLog() = loadingLog.removeAllViews()
 
     // ── Loading animation ─────────────────────────────────────────────────────
 
@@ -1385,7 +1587,7 @@ class MainActivity : AppCompatActivity() {
         loadingLogo.alpha = 0f;    loadingLogo.scaleX = 0.82f; loadingLogo.scaleY = 0.82f
         loadingTitle.alpha = 0f;   loadingTitle.translationY = 18f * dp
         loadingSubtitle.alpha = 0f; loadingProgress.alpha = 0f
-        loadingStatus.alpha = 0f;  loadingVersion.alpha = 0f
+        loadingLog.alpha = 0f;     loadingVersion.alpha = 0f
         loadingEndpoint.alpha = 0f; loadingBrand.alpha = 0f
 
         loadingLogo.animate().alpha(1f).scaleX(1f).scaleY(1f)
@@ -1393,7 +1595,7 @@ class MainActivity : AppCompatActivity() {
         loadingTitle.animate().alpha(1f).translationY(0f).setDuration(340).setStartDelay(280).start()
         loadingSubtitle.animate().alpha(0.65f).setDuration(300).setStartDelay(400).start()
         loadingProgress.animate().alpha(1f).setDuration(280).setStartDelay(520).start()
-        loadingStatus.animate().alpha(0.7f).setDuration(280).setStartDelay(600).start()
+        loadingLog.animate().alpha(1f).setDuration(280).setStartDelay(600).start()
         loadingEndpoint.animate().alpha(0.55f).setDuration(280).setStartDelay(660).start()
         loadingBrand.animate().alpha(0.4f).setDuration(300).setStartDelay(700).start()
         loadingVersion.animate().alpha(0.4f).setDuration(300).setStartDelay(700).start()
@@ -1424,7 +1626,7 @@ class MainActivity : AppCompatActivity() {
         // Reset to the neutral "which side" glyph — setSwitchStage() only takes
         // over once connectRemote() actually starts the VPN handshake.
         switchRemoteEmoji.text = "☁️"
-        updateStatus(if (pending) "Finding connection..." else "Switching...")
+        if (pending) step("🧭", "Finding connection...") else step("🔀", "Switching...")
     }
 
     /** Key → closed lock → open lock, driven by connectRemote()'s own stages — see there. */
@@ -1447,7 +1649,8 @@ class MainActivity : AppCompatActivity() {
             .setInterpolator(OvershootInterpolator()).start()
         loser.animate().alpha(0.18f).scaleX(0.7f).scaleY(0.7f).setDuration(320).start()
 
-        updateStatus(if (to == HaTarget.LOCAL) "Local Network" else "Remote Connection")
+        if (to == HaTarget.LOCAL) step("🏠", "Local Network")
+        else step("☁️", "Remote Connection")
     }
 
     private fun hideSwitchEmoji() {
@@ -1467,7 +1670,7 @@ class MainActivity : AppCompatActivity() {
         // connectRemote() already leaves a specific status behind (which step
         // failed, or that the user cancelled) — the generic fallback would
         // only make VPN failures less informative than every other error path.
-        if (!keepStatus) updateStatus(troubleMessage(code))
+        if (!keepStatus) step(troubleEmoji(code), troubleMessage(code))
 
         val persistent = consecutiveFailures > SILENT_RETRY_ATTEMPTS
         if (persistent) showRetryHint() else hideRetryHint()
@@ -1479,6 +1682,12 @@ class MainActivity : AppCompatActivity() {
         } else SILENT_RETRY_DELAY_MS
         mainHandler.removeCallbacks(errorRetryRunnable)
         mainHandler.postDelayed(errorRetryRunnable, delay)
+    }
+
+    private fun troubleEmoji(code: Int): String = when (code) {
+        WebViewClient.ERROR_FAILED_SSL_HANDSHAKE, ERROR_SSL -> "⚠️"
+        WebViewClient.ERROR_AUTHENTICATION                  -> "🔐"
+        else                                                -> "🔄"
     }
 
     private fun troubleMessage(code: Int): String = when (code) {

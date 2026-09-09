@@ -27,9 +27,24 @@ object CvAuthApi {
         val lanCidr: String,
     )
 
+    /**
+     * Three outcomes, not two. "cv-auth said no" and "cv-auth never answered"
+     * used to arrive here as the same failure, so the caller had no way to tell
+     * a dead session from one bad minute of signal — and treated both as dead.
+     * Only [Rejected] is the service's own verdict on the token.
+     */
     sealed class Result {
         data class Ok(val config: VpnConfig) : Result()
-        data class Failed(val message: String) : Result()
+
+        sealed class Failed : Result() {
+            abstract val message: String
+        }
+
+        /** The service answered, and the answer was no. */
+        data class Rejected(val status: Int, override val message: String) : Failed()
+
+        /** No answer worth trusting: offline, timed out, banned for an hour, or the service itself is down. */
+        data class Unreachable(override val message: String) : Failed()
     }
 
     /** [code] is the 6-digit Telegram OTP; [pubkey] is this device's WireGuard public key. */
@@ -62,8 +77,19 @@ object CvAuthApi {
                         ?.bufferedReader()?.readText().orEmpty()
 
                     if (!ok) {
-                        val msg = runCatching { JSONObject(text).optString("error") }.getOrNull()
-                        return@runCatching Result.Failed(msg?.takeIf { it.isNotBlank() } ?: "HTTP ${conn.responseCode}")
+                        val status = conn.responseCode
+                        // FastAPI puts the reason in "detail"; "error" is kept for
+                        // anything older that still answers the other way.
+                        val msg = runCatching {
+                            val json = JSONObject(text)
+                            json.optString("detail").ifBlank { json.optString("error") }
+                        }.getOrNull()?.takeIf { it.isNotBlank() } ?: "HTTP $status"
+                        // A 5xx is the service having a bad day and a 429 is an
+                        // hour in the sin bin — neither is a verdict on this
+                        // token, and neither should cost anybody their session.
+                        return@runCatching if (status in 400..499 && status != 429)
+                            Result.Rejected(status, msg)
+                        else Result.Unreachable(msg)
                     }
 
                     val json = JSONObject(text)
@@ -80,6 +106,6 @@ object CvAuthApi {
                 } finally {
                     conn.disconnect()
                 }
-            }.getOrElse { Result.Failed(it.message ?: "Network error") }
+            }.getOrElse { Result.Unreachable(it.message ?: "Network error") }
         }
 }

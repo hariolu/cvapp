@@ -28,8 +28,9 @@ implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
 implementation 'com.wireguard.android:tunnel:1.0.20260102'
 ```
 
-It talks to your Home Assistant instance and to this repository's releases page.
-Nowhere else. Two permissions, both listed in
+It talks to your Home Assistant instance, to the sign-in service that grants
+remote access, and to this repository's releases page. Nowhere else. Two
+permissions, both listed in
 [`AndroidManifest.xml`](app/src/main/AndroidManifest.xml): network access, and
 installing updates.
 
@@ -38,14 +39,23 @@ For what Coyotes Vision *is*, and everything that is not about this APK, see
 
 ## What the app does
 
-It is not a bookmark to a web page. It knows about two addresses for the same
-home — the one on your local network and the one behind the remote login — and
-keeps choosing the right one for you.
+It is not a bookmark to a web page. It knows two ways to the same home — the
+local network, and a WireGuard tunnel it raises itself — and keeps choosing the
+right one for you.
 
 **Finds your home by itself.** On every network change it probes the local
 address with a 700 ms timeout. On Wi-Fi with the instance answering it connects
-directly; otherwise it goes through the remote portal. Walk out of the door
-mid-session and the connection follows you.
+directly; otherwise it brings the tunnel up and loads the very same address
+through it. One address either way, so the session you had at the kitchen table
+is the session you still have at the bus stop. Walk out of the door mid-session
+and the connection follows you.
+
+**Signs in once.** Remote access is a WireGuard peer of your own, granted by a
+six-digit code from your Coyotes Vision bot on Telegram. After that the app
+keeps it: the session renews itself quietly in the background, survives a month
+of never leaving the house, and asks for another code only when the service
+itself says the old one is finished. A patchy signal is not an answer, and is
+never treated as one.
 
 **Opens links where they belong.** A link from a notification, a bot message, a
 QR code or a home-screen shortcut opens the app on that exact page.
@@ -102,11 +112,12 @@ cd cvapp
 ./gradlew assembleDebug
 ```
 
-The APK appears in `app/build/outputs/apk/debug/`. JDK 17 is required; the runtime
-bundled with Android Studio works:
+The APK appears in `app/build/outputs/apk/debug/`. **JDK 17 is required** — and
+required literally: Gradle 8.9 refuses anything newer, which now includes the
+runtime bundled with Android Studio. Point `JAVA_HOME` at a real JDK 17:
 
 ```bash
-export JAVA_HOME="/c/Program Files/Android/Android Studio/jbr"   # Git Bash
+export JAVA_HOME=/path/to/jdk-17
 ```
 
 Everything configurable sits at the top of
