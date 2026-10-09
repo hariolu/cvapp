@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- mdi-car, Material Design Icons 7.4.47 (Pictogrammers, Apache 2.0). design/icons.py -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M 5 11 L 6.5 6.5 H 17.5 L 19 11 M 17.5 16 A 1.5 1.5 0 0 1 16 14.5 A 1.5 1.5 0 0 1 17.5 13 A 1.5 1.5 0 0 1 19 14.5 A 1.5 1.5 0 0 1 17.5 16 M 6.5 16 A 1.5 1.5 0 0 1 5 14.5 A 1.5 1.5 0 0 1 6.5 13 A 1.5 1.5 0 0 1 8 14.5 A 1.5 1.5 0 0 1 6.5 16 M 18.92 6 C 18.72 5.42 18.16 5 17.5 5 H 6.5 C 5.84 5 5.28 5.42 5.08 6 L 3 12 V 20 A 1 1 0 0 0 4 21 H 5 A 1 1 0 0 0 6 20 V 19 H 18 V 20 A 1 1 0 0 0 19 21 H 20 A 1 1 0 0 0 21 20 V 12 L 18.92 6 Z" />
+</vector>

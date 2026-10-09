@@ -1,7 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- NoActionBar — прячет тулбар, оставляет системный navbar и статус-бар -->
+    <!-- DayNight on purpose, though every screen of the app's own is painted
+         from the person's look (Look.kt) and never from this theme: WebView
+         tells the page prefers-color-scheme from the theme's day or night, and
+         Home Assistant's "Auto" mode reads exactly that. A theme fixed to dark
+         would take the light half of the house's look away from the app.
+         NoActionBar: the app has no chrome of its own. -->
     <style name="Theme.CVapp" parent="Theme.AppCompat.DayNight.NoActionBar">
-        <item name="android:windowBackground">@android:color/black</item>
+        <!-- The default look's background (Amber), until the person's is known. -->
+        <item name="android:windowBackground">@color/cv_bg</item>
+        <item name="colorAccent">@color/cv_accent</item>
+        <item name="android:fontFamily">@font/inter</item>
+        <item name="fontFamily">@font/inter</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
 </resources>

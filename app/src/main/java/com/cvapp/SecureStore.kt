@@ -153,6 +153,25 @@ class SecureStore(context: Context) {
 
     fun hasPeer(): Boolean = wgPrivateKey != null && refreshToken != null && serverPubkey != null
 
+    /**
+     * Everything that lets this phone in from outside: the WireGuard key and
+     * the session. cv-auth is not told — it has no way to be — but its peer
+     * is useless without the key, which existed only here, and the session
+     * lapses there after a month unused. The house's address stays: the page
+     * is loaded from it at home too, and Home Assistant's sign-in lives there.
+     */
+    fun forget() {
+        prefs.edit()
+            .remove("vpn_wg_private_key")
+            .remove("vpn_refresh_token")
+            .remove("vpn_server_pubkey")
+            .remove("vpn_endpoint")
+            .remove("vpn_tunnel_ip")
+            .remove("vpn_lan_cidr")
+            .remove(KEY_LAST_REFRESH)
+            .commit()
+    }
+
     fun clearSession() {
         // Deliberately keeps wgPrivateKey — the device identity survives a
         // revoked/expired session; only bootstrap ever needs to replace it.

@@ -3,4 +3,9 @@
     <!-- Adaptive icon background is transparent: the coyote is a sticker, and a
          filled plate behind it just reads as a badge on any launcher wallpaper. -->
     <color name="ic_launcher_background">#00000000</color>
+
+    <!-- The engine's default look, Amber · Classic (cv-look.js): what the app
+         shows before it has learned the person's own. -->
+    <color name="cv_bg">#FF100E0E</color>
+    <color name="cv_accent">#FFB87848</color>
 </resources>

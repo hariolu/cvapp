@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Long-press the app's icon. Each shortcut is an ordinary cvha:// link, so it
+     takes the same road as one from CVBot: a path only, opened on whichever side
+     of the front door the phone is (see MainActivity, deep links). The scheme and
+     package are spelled out because a resource cannot read build.gradle's values;
+     they are linkScheme and the applicationId there. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <shortcut
+        android:shortcutId="cvmail"
+        android:icon="@drawable/ic_shortcut_mail"
+        android:shortcutShortLabel="@string/shortcut_mail">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.cvapp"
+            android:targetClass="com.cvapp.MainActivity"
+            android:data="cvha://cv-panel/cvmail" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="trips"
+        android:icon="@drawable/ic_shortcut_trips"
+        android:shortcutShortLabel="@string/shortcut_trips">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.cvapp"
+            android:targetClass="com.cvapp.MainActivity"
+            android:data="cvha://cv-panel/trips" />
+    </shortcut>
+
+    <shortcut
+        android:shortcutId="app-settings"
+        android:icon="@drawable/ic_shortcut_settings"
+        android:shortcutShortLabel="@string/settings_title">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.cvapp"
+            android:targetClass="com.cvapp.MainActivity"
+            android:data="cvha://app-settings" />
+    </shortcut>
+
+</shortcuts>

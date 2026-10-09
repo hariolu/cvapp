@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- mdi-dock-bottom, Material Design Icons 7.4.47 (Pictogrammers, Apache 2.0). design/icons.py -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M 20 4 H 4 A 2 2 0 0 0 2 6 V 18 A 2 2 0 0 0 4 20 H 20 A 2 2 0 0 0 22 18 V 6 A 2 2 0 0 0 20 4 M 20 13 H 4 V 6 H 20 Z" />
+</vector>

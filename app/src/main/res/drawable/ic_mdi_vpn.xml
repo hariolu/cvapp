@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- mdi-vpn, Material Design Icons 7.4.47 (Pictogrammers, Apache 2.0). design/icons.py -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M 9 5 H 15 L 12 8 L 9 5 M 10.5 14.66 C 10.2 15 10 15.5 10 16 A 2 2 0 0 0 12 18 A 2 2 0 0 0 14 16 C 14 15.45 13.78 14.95 13.41 14.59 L 14.83 13.17 C 15.55 13.9 16 14.9 16 16 A 4 4 0 0 1 12 20 A 4 4 0 0 1 8 16 C 8 14.93 8.42 13.96 9.1 13.25 L 9.09 13.24 L 16.17 6.17 V 6.17 C 16.89 5.45 17.89 5 19 5 A 4 4 0 0 1 23 9 A 4 4 0 0 1 19 13 C 17.9 13 16.9 12.55 16.17 11.83 L 17.59 10.41 C 17.95 10.78 18.45 11 19 11 A 2 2 0 0 0 21 9 A 2 2 0 0 0 19 7 C 18.45 7 17.95 7.22 17.59 7.59 L 10.5 14.66 M 6.41 7.59 C 6.05 7.22 5.55 7 5 7 A 2 2 0 0 0 3 9 A 2 2 0 0 0 5 11 C 5.55 11 6.05 10.78 6.41 10.41 L 7.83 11.83 C 7.1 12.55 6.1 13 5 13 A 4 4 0 0 1 1 9 A 4 4 0 0 1 5 5 C 6.11 5 7.11 5.45 7.83 6.17 V 6.17 L 10.59 8.93 L 9.17 10.35 L 6.41 7.59 Z" />
+</vector>

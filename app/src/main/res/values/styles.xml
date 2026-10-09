@@ -1,0 +1,179 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Bubble Card's measures, as the CV Panel uses them (cv-core panel.css): a card
+     row 50dp with 5dp inside, an icon box 38dp, sub-buttons 36dp, separators
+     16sp at 600. Colours are not set here: Bubble.paint() puts the person's
+     look on whatever these views are tagged as. -->
+<resources>
+
+    <style name="Bubble" />
+
+    <!-- A Bubble button card: icon box, name and state, something at the right. -->
+    <style name="Bubble.Card">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:minHeight">50dp</item>
+        <item name="android:orientation">horizontal</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:padding">5dp</item>
+        <item name="android:paddingEnd">7dp</item>
+        <item name="android:layout_marginBottom">8dp</item>
+        <item name="android:tag">card</item>
+    </style>
+
+    <style name="Bubble.Icon">
+        <item name="android:layout_width">38dp</item>
+        <item name="android:layout_height">38dp</item>
+        <item name="android:padding">8dp</item>
+        <item name="android:scaleType">fitCenter</item>
+        <item name="android:tag">icon</item>
+        <item name="android:importantForAccessibility">no</item>
+    </style>
+
+    <!-- The name and state beside an icon box. -->
+    <style name="Bubble.Text">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:layout_marginStart">10dp</item>
+        <item name="android:layout_marginEnd">8dp</item>
+        <item name="android:orientation">vertical</item>
+    </style>
+
+    <style name="Bubble.Name">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:fontFamily">@font/inter_semibold</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:ellipsize">end</item>
+        <item name="android:tag">text</item>
+    </style>
+
+    <style name="Bubble.State">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">1dp</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:tag">muted</item>
+    </style>
+
+    <!-- A sub-button: quiet on the well, or filled (tag sub-on). -->
+    <style name="Bubble.Sub">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">36dp</item>
+        <item name="android:minWidth">36dp</item>
+        <item name="android:gravity">center</item>
+        <item name="android:paddingStart">13dp</item>
+        <item name="android:paddingEnd">13dp</item>
+        <item name="android:drawablePadding">6dp</item>
+        <item name="android:fontFamily">@font/inter_medium</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+        <item name="android:tag">sub</item>
+    </style>
+
+    <!-- An icon-only sub-button: close, settings. -->
+    <style name="Bubble.SubIcon">
+        <item name="android:layout_width">36dp</item>
+        <item name="android:layout_height">36dp</item>
+        <item name="android:padding">8dp</item>
+        <item name="android:scaleType">fitCenter</item>
+        <item name="android:clickable">true</item>
+        <item name="android:focusable">true</item>
+        <item name="android:tag">sub</item>
+    </style>
+
+    <!-- A form's buttons: bottom right, the filled one last (panel rule 5). -->
+    <style name="Bubble.Button" parent="Bubble.Sub">
+        <item name="android:layout_height">40dp</item>
+        <item name="android:paddingStart">18dp</item>
+        <item name="android:paddingEnd">18dp</item>
+        <item name="android:fontFamily">@font/inter_semibold</item>
+        <item name="android:textSize">14sp</item>
+    </style>
+
+    <style name="Bubble.Button.Filled">
+        <item name="android:tag">sub-on</item>
+    </style>
+
+    <!-- A separator: an icon, a name, then the bar to the end of the row. -->
+    <style name="Bubble.Separator">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:minHeight">26dp</item>
+        <item name="android:orientation">horizontal</item>
+        <item name="android:gravity">center_vertical</item>
+        <item name="android:layout_marginTop">16dp</item>
+        <item name="android:layout_marginBottom">8dp</item>
+        <item name="android:layout_marginStart">2dp</item>
+        <item name="android:layout_marginEnd">2dp</item>
+    </style>
+
+    <style name="Bubble.Separator.Icon" parent="">
+        <item name="android:layout_width">22dp</item>
+        <item name="android:layout_height">22dp</item>
+        <item name="android:layout_marginEnd">10dp</item>
+        <item name="android:tag">text</item>
+        <item name="android:importantForAccessibility">no</item>
+    </style>
+
+    <style name="Bubble.Separator.Name" parent="">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:fontFamily">@font/inter_semibold</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:tag">text</item>
+        <item name="android:accessibilityHeading">true</item>
+    </style>
+
+    <style name="Bubble.Separator.Bar" parent="">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">6dp</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:layout_marginStart">10dp</item>
+        <item name="android:tag">sep</item>
+    </style>
+
+    <!-- A note under a card: why, or what Android does about it. -->
+    <style name="Bubble.Note">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginStart">4dp</item>
+        <item name="android:layout_marginEnd">4dp</item>
+        <item name="android:layout_marginBottom">10dp</item>
+        <item name="android:textSize">12sp</item>
+        <item name="android:lineSpacingExtra">2dp</item>
+        <item name="android:tag">muted</item>
+    </style>
+
+    <!-- A pop-up's title and body (the update and link cards). -->
+    <style name="Bubble.PopupTitle">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:layout_marginStart">12dp</item>
+        <item name="android:fontFamily">@font/inter_semibold</item>
+        <item name="android:textSize">17sp</item>
+        <item name="android:tag">text</item>
+    </style>
+
+    <style name="Bubble.PopupBody">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">14dp</item>
+        <item name="android:textSize">14sp</item>
+        <item name="android:lineSpacingExtra">3dp</item>
+        <item name="android:tag">muted</item>
+    </style>
+
+    <style name="Bubble.Actions">
+        <item name="android:layout_width">match_parent</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:layout_marginTop">20dp</item>
+        <item name="android:orientation">horizontal</item>
+        <item name="android:gravity">end|center_vertical</item>
+    </style>
+
+</resources>

@@ -10,9 +10,40 @@
     <string name="link_hint_open_settings">Open settings</string>
     <string name="link_hint_later">Not now</string>
 
-    <!-- App settings — long-press the loading screen, or cvha://app-settings -->
+    <!-- Loading screen -->
+    <string name="loading_title">Coyotes Vision</string>
+    <string name="loading_retry">Retry now</string>
+    <string name="route_local">Local</string>
+    <string name="route_remote">Remote</string>
+    <!-- Greeting: the time of day, and the name Home Assistant knows this phone by -->
+    <string name="greeting_morning">Good morning</string>
+    <string name="greeting_afternoon">Good afternoon</string>
+    <string name="greeting_evening">Good evening</string>
+    <string name="greeting_night">Welcome back</string>
+    <string name="greeting_named">%1$s, %2$s</string>
+
+    <!-- App settings — the gear on the loading screen, a long-press on it, or cvha://app-settings -->
     <string name="settings_title">App settings</string>
     <string name="settings_close">Close</string>
+
+    <string name="settings_look_section">Look</string>
+    <string name="settings_look_name">%1$s · %2$s</string>
+    <string name="settings_look_state">%1$s background · %2$d fps</string>
+    <string name="settings_look_state_off">Background off</string>
+    <string name="settings_look_note">Your colour and background from the CV Panel, here too, in the mode Home Assistant shows you. Change them in the CV Panel, under Settings.</string>
+    <string name="settings_look_note_default">The house has not told the app your look yet. It will once Home Assistant is open; until then this is Coyotes Vision\'s default.</string>
+
+    <string name="settings_screen_section">Screen</string>
+    <string name="settings_status_bar_title">Hide the status bar</string>
+    <string name="settings_status_bar_on">Hidden: the dashboard reaches the top edge, under the camera if the phone has one there. Swipe down from it to see the bar for a moment</string>
+    <string name="settings_status_bar_off">The clock and notifications stay at the top</string>
+    <string name="settings_nav_bar_title">Hide the navigation bar</string>
+    <string name="settings_nav_bar_on">Hidden: the dashboard reaches the bottom edge. Swipe up from it to see the bar for a moment</string>
+    <string name="settings_nav_bar_off">Back, Home and the app switcher stay at the bottom</string>
+    <string name="settings_awake_title">Keep the screen on while charging</string>
+    <string name="settings_awake_off">For a phone on a stand or a tablet on the wall</string>
+    <string name="settings_awake_on">On whenever the phone is charging</string>
+    <string name="settings_awake_now">On, and charging now: the screen stays on</string>
 
     <string name="settings_home_title">Home screen</string>
     <string name="settings_home_state_active">CVapp is your home screen</string>
@@ -22,14 +53,34 @@
     <string name="settings_home_removed">CVapp is no longer offered as a home app</string>
     <string name="settings_home_no_picker">This device has no home app settings screen</string>
 
+    <string name="settings_connection_section">Connection</string>
+    <string name="settings_route_local">At home, on the local network</string>
+    <string name="settings_route_remote">Away, through the tunnel</string>
+    <string name="settings_route_none">Not connected yet</string>
+    <string name="settings_remote_title">Remote access</string>
+    <string name="settings_remote_none">Not set up. The first time you are away, the app asks for a code from the bot</string>
+    <string name="settings_remote_today">Signed in · renewed today</string>
+    <string name="settings_remote_yesterday">Signed in · renewed yesterday</string>
+    <string name="settings_remote_days">Signed in · renewed %1$d days ago</string>
+    <string name="settings_remote_unknown">Signed in</string>
+    <string name="settings_remote_forget">Forget</string>
+    <string name="settings_remote_forget_confirm">Forget now</string>
+    <string name="settings_remote_forget_warning">Away from home, the app will need a new code from the bot. Tap again to forget</string>
+    <string name="settings_remote_forgotten">This phone no longer has remote access</string>
+
+    <!-- Launcher shortcuts: long-press the app's icon -->
+    <string name="shortcut_mail">CV Mail</string>
+    <string name="shortcut_trips">Car Trips</string>
+
+    <string name="settings_app_section">App</string>
     <string name="settings_links_title">Links to open in this app</string>
     <string name="settings_links_subtitle">Open Coyotes Vision links from CVBot and notifications straight in this app</string>
 
     <string name="settings_update_title">Check for updates</string>
     <string name="settings_update_subtitle">Version %1$s</string>
 
-    <string name="settings_about_site">coyotes.vision ↗</string>
-    <string name="settings_about_github">GitHub ↗</string>
+    <string name="settings_about_site">coyotes.vision</string>
+    <string name="settings_about_github">GitHub</string>
 
     <!-- Self-update -->
     <string name="update_available_title">CVapp %1$s is available</string>
@@ -51,7 +102,7 @@
     <string name="otp_brand">coyotes.vision</string>
     <string name="otp_tagline">remote access sign-in</string>
     <string name="otp_body">Get a 6-digit code from your Coyotes Vision bot on Telegram, then enter it below.</string>
-    <string name="otp_open_bot">Open Telegram bot ↗</string>
+    <string name="otp_open_bot">Open the Telegram bot</string>
     <string name="otp_incomplete">Enter all 6 digits</string>
     <string name="otp_hint">000000</string>
     <string name="otp_submit">Connect</string>

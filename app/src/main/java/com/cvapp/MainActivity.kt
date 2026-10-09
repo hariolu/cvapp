@@ -4,20 +4,29 @@ import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
 import android.annotation.SuppressLint
 import android.app.ActivityManager
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.verify.domain.DomainVerificationManager
 import android.content.pm.verify.domain.DomainVerificationUserState
+import android.graphics.RenderEffect
+import android.graphics.Shader
+import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.net.http.SslError
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.Message
 import android.provider.Settings
+import android.util.Log
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
+import android.view.WindowManager
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.view.animation.OvershootInterpolator
@@ -30,12 +39,15 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.result.ActivityResult
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.appcompat.widget.SwitchCompat
+import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.wireguard.android.backend.Tunnel
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.CoroutineScope
@@ -47,7 +59,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlin.coroutines.resume
+import org.json.JSONObject
 import java.io.File
+import java.util.Calendar
 
 class MainActivity : AppCompatActivity() {
 
@@ -55,19 +69,24 @@ class MainActivity : AppCompatActivity() {
 
     // Single status screen — used for initial load, the local⇄remote switch
     // animation, and masking connection trouble. See activity_main.xml.
+    private lateinit var rootLayout: FrameLayout
     private lateinit var loadingView: View
+    private lateinit var loadingSky: BackdropView
+    private lateinit var loadingSettings: ImageView
     private lateinit var loadingLogo: ImageView
     private lateinit var loadingTitle: TextView
-    private lateinit var loadingSubtitle: TextView
+    private lateinit var loadingGreeting: TextView
+    private lateinit var routeRow: LinearLayout
+    private lateinit var routeLocal: TextView
+    private lateinit var routeRemote: TextView
     private lateinit var loadingLog: LinearLayout
-    private lateinit var loadingEndpoint: TextView
+    private lateinit var statusCard: LinearLayout
+    private lateinit var statusIcon: ImageView
+    private lateinit var statusName: TextView
+    private lateinit var statusEndpoint: TextView
     private lateinit var loadingBrand: TextView
     private lateinit var loadingVersion: TextView
-    private lateinit var loadingProgress: ProgressBar
     private lateinit var loadingRetryHint: TextView
-    private lateinit var switchLocalColumn: LinearLayout
-    private lateinit var switchRemoteColumn: LinearLayout
-    private lateinit var switchRemoteEmoji: TextView
 
     private val prefs by lazy { getSharedPreferences("cvapp_prefs", Context.MODE_PRIVATE) }
     private var breathingAnimator: ObjectAnimator? = null
@@ -102,7 +121,6 @@ class MainActivity : AppCompatActivity() {
     // hand it back afterwards — one slot serves every card in the app.
     private var cardMarginStart = 0
     private var cardMarginEnd   = 0
-    private var cardBackground: android.graphics.drawable.Drawable? = null
     private var cardElevation   = 0f
 
     private var currentTarget: HaTarget? = null
@@ -128,8 +146,9 @@ class MainActivity : AppCompatActivity() {
         private const val ERROR_RENDERER = -998
         private const val ERROR_VPN      = -997
 
+        private const val TAG = "CVapp"
+
         private const val RECHECK_INTERVAL_MS   = 20_000L
-        private const val SWITCH_REVEAL_HOLD_MS = 900L
         private const val SILENT_RETRY_ATTEMPTS = 2       // blips retried quietly before we surface a retry hint
         private const val SILENT_RETRY_DELAY_MS = 1_200L
         private const val INITIAL_BACKOFF_MS    = 3_000L
@@ -148,12 +167,62 @@ class MainActivity : AppCompatActivity() {
         private const val TUNNEL_PROBE_DELAY_MS   = 700L
         private const val TUNNEL_PROBE_TIMEOUT_MS = 2_500
 
-        /** How many lines of the connect log stay on screen. */
-        private const val LOG_LINES = 4
+        /** How many finished steps of the connect log stay above the status card. */
+        private const val LOG_LINES = 3
+        /** Their strength, newest first. */
+        private val LOG_FADES = floatArrayOf(0.85f, 0.55f, 0.3f)
+
+        // How wide a column may grow on a tablet: the loading screen's, the
+        // settings page's (the CV Panel's own 600, plus its padding), sign-in's.
+        private const val LOADING_COLUMN_DP  = 468
+        private const val SETTINGS_COLUMN_DP = 624
+        private const val OTP_COLUMN_DP      = 460
+        private const val CARD_MAX_DP        = 440
+        /** Behind a card: Bubble's pop-up scrim (the panel's rgba(0,0,0,.45)). */
+        private const val SCRIM = 0x73000000
 
         private const val KEY_LAST_PATH          = "last_ha_path"
         private const val KEY_LAST_UPDATE_CHECK  = "last_update_check"
         private const val KEY_LINK_HINT_DISMISSED = "link_hint_dismissed"
+
+        // App settings → Screen.
+        private const val KEY_HIDE_STATUS_BAR = "hide_status_bar"
+        private const val KEY_HIDE_NAV_BAR    = "hide_nav_bar"
+        /** How long "Forget" waits for its second tap. */
+        private const val FORGET_ARMED_MS     = 5_000L
+        private const val KEY_AWAKE_CHARGING  = "awake_while_charging"
+        /** The name Home Assistant knows this phone's person by, for the greeting. */
+        private const val KEY_USER_NAME       = "ha_user_name"
+
+        /** Where a person picks their look: the CV Panel's Settings (Appearance). */
+        private const val PANEL_APPEARANCE = "/cv-panel/settings"
+
+        /**
+         * When to read a page that has just loaded: once Home Assistant has had
+         * time to answer the page's own questions (who is this, what is their
+         * look), and once more for a slow house.
+         */
+        private val READ_PAGE_AFTER_MS = longArrayOf(2_000L, 8_000L)
+
+        /**
+         * Whether Home Assistant's frontend has drawn itself: it removes its own
+         * launch screen when the first panel is up. A page without one (the
+         * sign-in page, anything else) counts as drawn.
+         */
+        private const val FRONTEND_READY_JS = "!document.getElementById('ha-launch-screen')"
+        private const val FRONTEND_CHECK_MS = 150L
+        /** Six seconds: a frontend that never says so is shown anyway. */
+        private const val FRONTEND_CHECKS = 40
+
+        /**
+         * What the app reads off a Home Assistant page: the person's look (see
+         * Look.READ_JS), the name to greet them by, and whether this is the
+         * sign-in page — whoever was signed in has left, and their name goes too.
+         */
+        private val PAGE_JS = """(function () {
+  var ha = document.querySelector('home-assistant'), user = ha && ha.hass && ha.hass.user;
+  return { login: location.pathname.indexOf('/auth/') === 0, user: user ? user.name : null, look: ${Look.READ_JS} };
+})()"""
 
         // An update we have already been told about. Kept on disk so it survives
         // the process, because the moment it is most needed is after the user has
@@ -218,6 +287,19 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The person's look before anything is drawn: the last one a house gave.
+        Look.load(this)
+        // Edge-to-edge on every Android, not only where 15 insists on it: the
+        // bars then show the look's own background, not a strip of the system's.
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        // The window may run past the camera, as it does on 15 anyway: with the
+        // status bar hidden the page gets the camera's strip too (see the insets
+        // listener).
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
         setContentView(R.layout.activity_main)
 
         // Must be registered before onStart, same as any ActivityResultLauncher —
@@ -227,6 +309,7 @@ class MainActivity : AppCompatActivity() {
             vpnPermissionContinuation?.resume(result.resultCode == RESULT_OK)
             vpnPermissionContinuation = null
         }
+        filePicker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { onFilesChosen(it) }
 
         // First thing, before a second WebView gets built on top of the one that
         // is already out there. This is the instance Android keeps.
@@ -238,36 +321,57 @@ class MainActivity : AppCompatActivity() {
         // here left the WebView at full height with the keyboard drawn over it,
         // hiding whatever field the user had just tapped.
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.rootLayout)) { v, insets ->
-            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            val ime  = insets.getInsets(WindowInsetsCompat.Type.ime())
-            // Whichever is taller, not their sum: the keyboard is drawn over the
-            // navigation bar, so adding them leaves a navbar-sized dead strip.
-            v.setPadding(0, bars.top, 0, maxOf(bars.bottom, ime.bottom))
+            val bars   = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            val cutout = insets.getInsets(WindowInsetsCompat.Type.displayCutout())
+            val ime    = insets.getInsets(WindowInsetsCompat.Type.ime())
+            // A hidden status bar gives the page its whole height, up to the top
+            // edge — under the camera, on a phone that has one in the screen. The
+            // app's own screens step down by the camera's height instead: a gear
+            // or a title behind the lens helps nobody.
+            val camera = maxOf(0, cutout.top - bars.top)
+            loadingView.setPadding(0, camera, 0, 0)
+            dialogScrim.setPadding(0, camera, 0, 0)
+            // At the bottom whichever is taller, not their sum: the keyboard is
+            // drawn over the navigation bar, so adding them leaves a navbar-sized
+            // dead strip.
+            v.setPadding(
+                maxOf(bars.left, cutout.left), bars.top,
+                maxOf(bars.right, cutout.right), maxOf(bars.bottom, ime.bottom))
             WindowInsetsCompat.CONSUMED
         }
 
+        rootLayout         = findViewById(R.id.rootLayout)
         webView            = findViewById(R.id.webView)
         loadingView        = findViewById(R.id.loadingView)
+        loadingSky         = findViewById(R.id.loadingSky)
+        loadingSettings    = findViewById(R.id.loadingSettings)
         loadingLogo        = findViewById(R.id.loadingLogo)
         loadingTitle       = findViewById(R.id.loadingTitle)
-        loadingSubtitle    = findViewById(R.id.loadingSubtitle)
+        loadingGreeting    = findViewById(R.id.loadingGreeting)
+        routeRow           = findViewById(R.id.routeRow)
+        routeLocal         = findViewById(R.id.routeLocal)
+        routeRemote        = findViewById(R.id.routeRemote)
         loadingLog         = findViewById(R.id.loadingLog)
-        loadingEndpoint    = findViewById(R.id.loadingEndpoint)
+        statusCard         = findViewById(R.id.statusCard)
+        statusIcon         = findViewById(R.id.statusIcon)
+        statusName         = findViewById(R.id.statusName)
+        statusEndpoint     = findViewById(R.id.statusEndpoint)
         loadingBrand       = findViewById(R.id.loadingBrand)
         loadingVersion     = findViewById(R.id.loadingVersion)
-        loadingProgress    = findViewById(R.id.loadingProgress)
         loadingRetryHint   = findViewById(R.id.loadingRetryHint)
-        switchLocalColumn  = findViewById(R.id.switchLocalColumn)
-        switchRemoteColumn = findViewById(R.id.switchRemoteColumn)
-        switchRemoteEmoji  = findViewById(R.id.switchRemoteEmoji)
         dialogScrim        = findViewById(R.id.dialogScrim)
         dialogCard         = findViewById(R.id.dialogCard)
         (dialogCard.layoutParams as FrameLayout.LayoutParams).let {
             cardMarginStart = it.marginStart
             cardMarginEnd   = it.marginEnd
         }
-        cardBackground = dialogCard.background
         cardElevation  = dialogCard.elevation
+
+        applyLook(Look.current)
+        applyBars()
+        capWidth(findViewById(R.id.loadingColumn), LOADING_COLUMN_DP)
+        loadingGreeting.text = greeting()
+        statusEndpoint.text = endpointLabel()
 
         loadingVersion.text = "v${runCatching {
             packageManager.getPackageInfo(packageName, 0).versionName
@@ -286,6 +390,7 @@ class MainActivity : AppCompatActivity() {
         val openSettings = View.OnLongClickListener { showAppSettings(); true }
         loadingView.setOnLongClickListener(openSettings)
         loadingVersion.setOnLongClickListener(openSettings)
+        loadingSettings.setOnClickListener { showAppSettings() }
 
         networkMonitor = NetworkMonitor(this) { onNetworkSignal() }
 
@@ -334,6 +439,14 @@ class MainActivity : AppCompatActivity() {
         // so it never shows a state that stopped being true.
         refreshSettings?.invoke()
         resumeUpdateAfterPermission()
+        applyBars()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        // A system dialog (VPN consent, the home picker) can bring the bars back
+        // with it; put them away again when the window is ours once more.
+        if (hasFocus) applyBars()
     }
 
     override fun onStart() {
@@ -341,6 +454,10 @@ class MainActivity : AppCompatActivity() {
         networkMonitor.start()
         mainHandler.postDelayed(recheckRunnable, RECHECK_INTERVAL_MS)
         checkForUpdate(force = false)
+        // The charger, for "Keep the screen on while charging". The broadcast is
+        // sticky, so the state it is in now arrives at once.
+        ContextCompat.registerReceiver(this, powerReceiver,
+            IntentFilter(Intent.ACTION_BATTERY_CHANGED), ContextCompat.RECEIVER_NOT_EXPORTED)
         // Again on every foreground, not only at creation: a stray task can also
         // appear after the home instance exists, and coming to the front is the
         // natural moment to be sure this is the only one.
@@ -358,6 +475,14 @@ class MainActivity : AppCompatActivity() {
         super.onStop()
         networkMonitor.stop()
         mainHandler.removeCallbacks(recheckRunnable)
+        runCatching { unregisterReceiver(powerReceiver) }
+        // Whatever the person changed in the panel meanwhile, their colour above
+        // all, is what the next loading screen should wear.
+        readPage()
+        // Off to Android's file picker for the page: back in a moment, with the
+        // page waiting for its answer. Dropping the tunnel now would reload the
+        // page under it and lose the upload.
+        if (pickingFiles) return
         // The VPN key stays in the status bar for as long as the tunnel is up,
         // regardless of whether this app is on screen — that's Android's own
         // system indicator, not ours to hide. Tearing the tunnel down here (as
@@ -417,6 +542,8 @@ class MainActivity : AppCompatActivity() {
         // Dialogs are plain child views now, not separate windows — they die
         // with the activity's own view tree, nothing to leak or dismiss here.
         refreshSettings = null
+        fileCallback?.onReceiveValue(null)
+        fileCallback = null
         activityScope.cancel()
 
         // Duplicate instances are now destroyed deliberately, so their WebView has
@@ -455,6 +582,11 @@ class MainActivity : AppCompatActivity() {
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(r: PermissionRequest) = r.grant(r.resources)
+
+            // <input type="file">: answered by Android's own picker, see chooseFiles().
+            override fun onShowFileChooser(
+                view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams,
+            ): Boolean = chooseFiles(callback, params)
 
             // target="_blank" links → open in system browser
             override fun onCreateWindow(
@@ -496,7 +628,7 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageStarted(view: WebView, url: String, fav: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, fav)
-                step("🌐", "Loading...")
+                step(R.drawable.ic_mdi_web, "Loading…")
             }
 
             override fun onPageFinished(view: WebView, url: String) {
@@ -531,7 +663,8 @@ class MainActivity : AppCompatActivity() {
                     """.trimIndent(), null)
                 }
 
-                view.postDelayed({ hideLoading() }, 200)
+                awaitFrontend(url)
+                readPageSoon()
             }
 
             // Fires on both full navigations and SPA route changes (pushState,
@@ -727,13 +860,12 @@ class MainActivity : AppCompatActivity() {
 
     private fun resolveInitialTarget() {
         showLoading()
-        showSwitchEmoji(pending = true)
+        showSwitch(pending = true)
         resolveJob = activityScope.launch {
             val target = resolveTarget()
             currentTarget = target
+            revealSwitch(target)
             loadTarget(target)
-            revealSwitchEmoji(target)
-            mainHandler.postDelayed({ hideSwitchEmoji() }, SWITCH_REVEAL_HOLD_MS)
         }
     }
 
@@ -762,9 +894,8 @@ class MainActivity : AppCompatActivity() {
     private fun switchTo(target: HaTarget) {
         currentTarget = target
         showLoading()
-        showSwitchEmoji(pending = false)
-        revealSwitchEmoji(target)
-        mainHandler.postDelayed({ hideSwitchEmoji() }, SWITCH_REVEAL_HOLD_MS)
+        showSwitch(pending = false)
+        revealSwitch(target)
         // Real Wi-Fi makes the tunnel pointless overhead — drop it in the
         // background, the LOCAL page load below doesn't wait on this.
         if (target == HaTarget.LOCAL) activityScope.launch { vpnManager.down() }
@@ -778,14 +909,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadTarget(target: HaTarget) {
         if (!loadingVisible) showLoading()
-        loadingEndpoint.text = endpointLabel()
+        statusEndpoint.text = endpointLabel()
+        refreshSettings?.invoke()
         restoreArmed = true
         when (target) {
             HaTarget.LOCAL -> {
                 // A network blip could otherwise leave connectRemote() (and its
                 // OTP dialog) running in the background while LOCAL loads.
                 connectJob?.cancel()
-                step("🏠", "Connecting locally...")
+                step(R.drawable.ic_mdi_home_outline, "Connecting locally…")
                 // Being home is the safest moment to renew the way out of it.
                 keepSessionWarm()
                 // Same URL as REMOTE (see haUrl()) — a second origin here is what
@@ -837,7 +969,7 @@ class MainActivity : AppCompatActivity() {
     // Window intercepting it for us anymore. One slot — at most one dialog is
     // ever on screen, matching how this app has only ever shown one at a time.
 
-    private class ActiveDialog(val cancelable: Boolean, val onDismiss: (() -> Unit)?)
+    private class ActiveDialog(val cancelable: Boolean, val fullScreen: Boolean, val onDismiss: (() -> Unit)?)
 
     /**
      * Inflates [layoutRes] into the shared card and animates it on screen.
@@ -862,9 +994,17 @@ class MainActivity : AppCompatActivity() {
         shapeCard(fullScreen)
 
         val view = layoutInflater.inflate(layoutRes, dialogCard, false)
+        Bubble.paint(view, Look.current)
         dialogCard.addView(view)
-        activeDialog = ActiveDialog(cancelable, onDismiss)
+        activeDialog = ActiveDialog(cancelable, fullScreen, onDismiss)
+        // A page covers the loading screen whole, and its sky can rest meanwhile.
+        // Behind a card, what is under it goes soft, as behind Bubble's pop-ups.
+        loadingSky.paused = fullScreen
+        blurBehind(!fullScreen)
 
+        // Behind a card, a scrim; behind a page, the page's own colour, which is
+        // also what shows in the strip by the camera when the status bar is hidden.
+        dialogScrim.setBackgroundColor(if (fullScreen) Look.current.bg else SCRIM)
         dialogScrim.visibility = View.VISIBLE
         dialogScrim.alpha = 0f
         dialogScrim.animate().alpha(1f).setDuration(200).start()
@@ -898,17 +1038,35 @@ class MainActivity : AppCompatActivity() {
         val params = dialogCard.layoutParams as FrameLayout.LayoutParams
         params.height = if (fullScreen) FrameLayout.LayoutParams.MATCH_PARENT
         else FrameLayout.LayoutParams.WRAP_CONTENT
+        // A pop-up stays pop-up sized on a tablet, as Bubble's do.
+        val max = (CARD_MAX_DP * resources.displayMetrics.density).toInt()
+        params.width = if (!fullScreen && rootLayout.width - cardMarginStart - cardMarginEnd > max) max
+        else FrameLayout.LayoutParams.MATCH_PARENT
         params.marginStart = if (fullScreen) 0 else cardMarginStart
         params.marginEnd   = if (fullScreen) 0 else cardMarginEnd
         dialogCard.layoutParams = params
-        dialogCard.background    = if (fullScreen) null else cardBackground
+        dialogCard.background    = if (fullScreen) null else Bubble.popup(this, Look.current)
         dialogCard.elevation     = if (fullScreen) 0f else cardElevation
         dialogCard.clipToOutline = !fullScreen
+    }
+
+    /**
+     * Softens what is behind a card, the way the panel's pop-ups blur the page.
+     * Android draws that from 12 on; before, the scrim alone has to do.
+     */
+    private fun blurBehind(on: Boolean) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        val radius = 4f * resources.displayMetrics.density
+        val effect = if (on) RenderEffect.createBlurEffect(radius, radius, Shader.TileMode.CLAMP) else null
+        webView.setRenderEffect(effect)
+        loadingView.setRenderEffect(effect)
     }
 
     private fun dismissDialog() {
         val prev = activeDialog ?: return
         activeDialog = null
+        loadingSky.paused = false
+        blurBehind(false)
         dialogScrim.animate().alpha(0f).setDuration(180).withEndAction {
             dialogScrim.visibility = View.GONE
             dialogCard.removeAllViews()
@@ -928,7 +1086,7 @@ class MainActivity : AppCompatActivity() {
         if (vpnManager.currentState() == Tunnel.State.UP) return true
 
         setSwitchStage(SwitchStage.KEY)
-        step("🔑", "Checking access...")
+        step(R.drawable.ic_mdi_key_variant, "Checking access…")
 
         // OFFLINE is not one of the answers here: with nothing forcing it, an
         // unreachable cv-auth leaves us holding what we already had, and what we
@@ -937,9 +1095,9 @@ class MainActivity : AppCompatActivity() {
         if (access == Access.NEEDS_CODE && !signInWithCode()) return false
 
         setSwitchStage(SwitchStage.LOCK_CLOSED)
-        step("🛡️", "Requesting VPN permission...")
+        step(R.drawable.ic_mdi_shield_key_outline, "Requesting VPN permission…")
         if (!ensureVpnPermission()) {
-            step("⛔", "VPN permission denied")
+            step(R.drawable.ic_mdi_cancel, "VPN permission denied")
             return false
         }
 
@@ -952,13 +1110,13 @@ class MainActivity : AppCompatActivity() {
             access = ensureSession(force = true)
             if (access == Access.NEEDS_CODE && !signInWithCode()) return false
             if (access == Access.OFFLINE || !raiseTunnel()) {
-                step("📡", "Home is offline, retrying...")
+                step(R.drawable.ic_mdi_lan_disconnect, "Home is offline, retrying…")
                 return false
             }
         }
 
         setSwitchStage(SwitchStage.LOCK_OPEN)
-        step("✅", "Tunnel up, loading dashboard...")
+        step(R.drawable.ic_mdi_check_circle_outline, "Tunnel up, loading dashboard…")
         return true
     }
 
@@ -984,7 +1142,7 @@ class MainActivity : AppCompatActivity() {
             is CvAuthApi.Result.Ok -> { applyVpnConfig(result.config); Access.READY }
             // cv-auth says this token is dead. It is the only thing that can say so.
             is CvAuthApi.Result.Rejected -> {
-                step("⏳", "Session expired — sign in again")
+                step(R.drawable.ic_mdi_timer_sand_complete, "Session expired — sign in again")
                 secureStore.clearSession()
                 Access.NEEDS_CODE
             }
@@ -998,7 +1156,7 @@ class MainActivity : AppCompatActivity() {
     private suspend fun renewSession(): CvAuthApi.Result {
         val token = secureStore.refreshToken
             ?: return CvAuthApi.Result.Rejected(0, "No session")
-        step("🔄", "Renewing access...")
+        step(R.drawable.ic_mdi_refresh, "Renewing access…")
         var last: CvAuthApi.Result = CvAuthApi.Result.Unreachable("Network error")
         repeat(RENEW_ATTEMPTS) { attempt ->
             if (attempt > 0) delay(RENEW_RETRY_DELAY_MS)
@@ -1015,15 +1173,15 @@ class MainActivity : AppCompatActivity() {
     private suspend fun signInWithCode(): Boolean {
         val code = awaitOtpCode()
         if (code == null) {
-            step("✋", "Sign-in cancelled")
+            step(R.drawable.ic_mdi_close_circle_outline, "Sign-in cancelled")
             return false
         }
-        step("🔢", "Verifying code...")
+        step(R.drawable.ic_mdi_dialpad, "Verifying code…")
         val pubkey = vpnManager.ensureKeyPair(secureStore)
         return when (val result = CvAuthApi.bootstrap(code, pubkey)) {
             is CvAuthApi.Result.Ok -> { applyVpnConfig(result.config); true }
             is CvAuthApi.Result.Failed -> {
-                step("⛔", "Sign-in failed: ${result.message}")
+                step(R.drawable.ic_mdi_cancel, "Sign-in failed: ${result.message}")
                 toast(result.message)
                 false
             }
@@ -1039,7 +1197,7 @@ class MainActivity : AppCompatActivity() {
      * arrive.
      */
     private suspend fun raiseTunnel(): Boolean {
-        step("🔒", "Establishing tunnel...")
+        step(R.drawable.ic_mdi_lock_outline, "Establishing tunnel…")
         if (vpnManager.up(secureStore).isFailure) return false
         repeat(TUNNEL_PROBE_ATTEMPTS) { attempt ->
             if (attempt > 0) delay(TUNNEL_PROBE_DELAY_MS)
@@ -1091,6 +1249,7 @@ class MainActivity : AppCompatActivity() {
             val view = showDialog(R.layout.dialog_otp, cancelable = true, fullScreen = true) {
                 if (!resumed) { resumed = true; cont.resume(null) }
             }
+            capWidth(view.findViewById(R.id.otpColumn), OTP_COLUMN_DP)
             val input = view.findViewById<EditText>(R.id.otpCodeInput)
             val status = view.findViewById<TextView>(R.id.otpStatus)
             view.findViewById<TextView>(R.id.otpOpenBot).setOnClickListener {
@@ -1230,43 +1389,127 @@ class MainActivity : AppCompatActivity() {
         if (isFinishing || isDestroyed) return
         if (isDialogShowing()) return
 
-        val view         = showDialog(R.layout.dialog_app_settings, cancelable = true) { refreshSettings = null }
-        val homeRow      = view.findViewById<View>(R.id.settingsHomeRow)
-        val homeSwitch   = view.findViewById<SwitchCompat>(R.id.settingsHomeSwitch)
-        val homeSubtitle = view.findViewById<TextView>(R.id.settingsHomeSubtitle)
-        val linksRow     = view.findViewById<View>(R.id.settingsLinksRow)
-        val updateRow    = view.findViewById<View>(R.id.settingsUpdateRow)
+        val view = showDialog(R.layout.dialog_app_settings, cancelable = true, fullScreen = true) { refreshSettings = null }
+        capWidth(view.findViewById(R.id.settingsColumn), SETTINGS_COLUMN_DP)
+        fun text(id: Int) = view.findViewById<TextView>(id)
+        val statusSwitch = view.findViewById<BubbleSwitch>(R.id.settingsStatusBarSwitch)
+        val navSwitch    = view.findViewById<BubbleSwitch>(R.id.settingsNavBarSwitch)
+        val awakeSwitch  = view.findViewById<BubbleSwitch>(R.id.settingsAwakeSwitch)
+        val homeSwitch   = view.findViewById<BubbleSwitch>(R.id.settingsHomeSwitch)
 
-        view.findViewById<TextView>(R.id.settingsUpdateSubtitle).text =
-            getString(R.string.settings_update_subtitle, BuildConfig.VERSION_NAME)
+        text(R.id.settingsUpdateSubtitle).text = getString(R.string.settings_update_subtitle, BuildConfig.VERSION_NAME)
 
+        // Forgetting takes two taps: the first says what it will cost, and only
+        // for a few seconds.
+        val forget = text(R.id.settingsRemoteForget)
+        var forgetArmed = false
+
+        // Everything here can change while the page is open — a look read off the
+        // page, the charger, the home-app role changed in Settings — so one
+        // function says it all again, and setChecked() never reports back.
         val refresh = {
+            val look = Look.current
+            text(R.id.settingsLookName).text = getString(R.string.settings_look_name, look.familyName, look.shadeName)
+            text(R.id.settingsLookState).text =
+                if (look.animate) getString(R.string.settings_look_state, look.styleName, look.fps)
+                else getString(R.string.settings_look_state_off)
+            text(R.id.settingsLookNote).setText(
+                if (look.fromHouse) R.string.settings_look_note else R.string.settings_look_note_default)
+
+            val hidden = prefs.getBoolean(KEY_HIDE_STATUS_BAR, false)
+            statusSwitch.setChecked(hidden)
+            text(R.id.settingsStatusBarState).setText(
+                if (hidden) R.string.settings_status_bar_on else R.string.settings_status_bar_off)
+
+            val navHidden = prefs.getBoolean(KEY_HIDE_NAV_BAR, false)
+            navSwitch.setChecked(navHidden)
+            text(R.id.settingsNavBarState).setText(
+                if (navHidden) R.string.settings_nav_bar_on else R.string.settings_nav_bar_off)
+
+            val awake = prefs.getBoolean(KEY_AWAKE_CHARGING, false)
+            awakeSwitch.setChecked(awake)
+            text(R.id.settingsAwakeState).setText(when {
+                awake && charging -> R.string.settings_awake_now
+                awake             -> R.string.settings_awake_on
+                else              -> R.string.settings_awake_off
+            })
+
             val offered = LauncherMode.isOffered(this)
             val active  = LauncherMode.isCurrentHome(this)
-            homeSubtitle.setText(
-                when {
-                    active  -> R.string.settings_home_state_active
-                    offered -> R.string.settings_home_state_offered
-                    else    -> R.string.settings_home_state_off
-                }
-            )
-            // Detached first: assigning isChecked fires the listener, which would
-            // turn a read of the current state into a write of it.
-            homeSwitch.setOnCheckedChangeListener(null)
-            homeSwitch.isChecked = offered
-            homeSwitch.setOnCheckedChangeListener { _, checked -> setHomeAppOffered(checked) }
+            text(R.id.settingsHomeSubtitle).setText(when {
+                active  -> R.string.settings_home_state_active
+                offered -> R.string.settings_home_state_offered
+                else    -> R.string.settings_home_state_off
+            })
+            homeSwitch.setChecked(offered)
+
+            val target = currentTarget
+            view.findViewById<ImageView>(R.id.settingsRouteIcon).setImageResource(
+                if (target == HaTarget.REMOTE) R.drawable.ic_mdi_vpn else R.drawable.ic_mdi_home_outline)
+            text(R.id.settingsRouteName).setText(when (target) {
+                HaTarget.LOCAL  -> R.string.settings_route_local
+                HaTarget.REMOTE -> R.string.settings_route_remote
+                null            -> R.string.settings_route_none
+            })
+            text(R.id.settingsRouteState).text = endpointLabel()
+            text(R.id.settingsRemoteState).text =
+                if (forgetArmed) getString(R.string.settings_remote_forget_warning) else remoteAccessState()
+            forget.visibility = if (secureStore.hasPeer()) View.VISIBLE else View.GONE
+            forget.setText(if (forgetArmed) R.string.settings_remote_forget_confirm else R.string.settings_remote_forget)
+            forget.tag = if (forgetArmed) "danger-on" else "danger"
+            Bubble.paint(forget, Look.current)
         }
         refresh()
         refreshSettings = refresh
 
-        // Tapping the row rather than the switch reopens the picker. That is the
-        // step between "CVapp can be a home app" and "CVapp is the home app" —
-        // only the user makes that choice, and Android will not ask on our behalf.
-        homeRow.setOnClickListener {
-            if (LauncherMode.isOffered(this)) openHomePicker() else homeSwitch.isChecked = true
+        statusSwitch.setOnCheckedChangeListener { hide ->
+            prefs.edit().putBoolean(KEY_HIDE_STATUS_BAR, hide).apply()
+            applyBars()
+            refresh()
         }
-        linksRow.setOnClickListener { openLinkSettings() }
-        updateRow.setOnClickListener {
+        navSwitch.setOnCheckedChangeListener { hide ->
+            prefs.edit().putBoolean(KEY_HIDE_NAV_BAR, hide).apply()
+            applyBars()
+            refresh()
+        }
+        awakeSwitch.setOnCheckedChangeListener { on ->
+            prefs.edit().putBoolean(KEY_AWAKE_CHARGING, on).apply()
+            applyKeepAwake()
+            refresh()
+        }
+        homeSwitch.setOnCheckedChangeListener { setHomeAppOffered(it) }
+
+        val disarm = Runnable { forgetArmed = false; refresh() }
+        forget.setOnClickListener {
+            mainHandler.removeCallbacks(disarm)
+            if (forgetArmed) {
+                forgetArmed = false
+                forgetRemoteAccess()
+            } else {
+                forgetArmed = true
+                refresh()
+                mainHandler.postDelayed(disarm, FORGET_ARMED_MS)
+            }
+        }
+
+        // A row is as good as its switch: the whole card is the target.
+        view.findViewById<View>(R.id.settingsStatusBarRow).setOnClickListener { statusSwitch.toggle() }
+        view.findViewById<View>(R.id.settingsNavBarRow).setOnClickListener { navSwitch.toggle() }
+        view.findViewById<View>(R.id.settingsAwakeRow).setOnClickListener { awakeSwitch.toggle() }
+        // Except here: tapping the row once CVapp is offered reopens the picker.
+        // That is the step between "CVapp can be a home app" and "CVapp is the
+        // home app" — only the user makes that choice, and Android will not ask
+        // on our behalf.
+        view.findViewById<View>(R.id.settingsHomeRow).setOnClickListener {
+            if (LauncherMode.isOffered(this)) openHomePicker() else homeSwitch.toggle()
+        }
+        // The look is chosen where the house keeps it: the CV Panel.
+        view.findViewById<View>(R.id.settingsLookRow).setOnClickListener {
+            dismissDialog()
+            applyDeepLink(PANEL_APPEARANCE)
+        }
+        view.findViewById<View>(R.id.settingsLinksRow).setOnClickListener { openLinkSettings() }
+        view.findViewById<View>(R.id.settingsUpdateRow).setOnClickListener {
             dismissDialog()      // the update prompt takes it from here
             checkForUpdate(force = true)
         }
@@ -1274,6 +1517,37 @@ class MainActivity : AppCompatActivity() {
         view.findViewById<View>(R.id.settingsSiteLink).setOnClickListener { openExternal(siteUrl()) }
         view.findViewById<View>(R.id.settingsGithubLink).setOnClickListener {
             openExternal("https://github.com/${BuildConfig.UPDATE_REPO}")
+        }
+
+        // The newest look and name, painted in when the page answers.
+        readPage()
+    }
+
+    /**
+     * Forgets this phone's remote access, from App settings. cv-auth cannot be
+     * told; the session it holds lapses after a month unused, and the key that
+     * could have used it is gone from here. Away from home that was the way in,
+     * so the app goes straight back to asking for a code.
+     */
+    private fun forgetRemoteAccess() {
+        activityScope.launch {
+            vpnManager.down()
+            secureStore.forget()
+            toast(getString(R.string.settings_remote_forgotten))
+            refreshSettings?.invoke()
+            if (currentTarget == HaTarget.REMOTE) checkAvailabilityAndActOn(forceReload = true)
+        }
+    }
+
+    /** How the remote session stands, for the Connection card. */
+    private fun remoteAccessState(): String {
+        if (!secureStore.hasPeer()) return getString(R.string.settings_remote_none)
+        val age = secureStore.sessionAgeMs()
+        if (age == Long.MAX_VALUE) return getString(R.string.settings_remote_unknown)
+        return when (val days = (age / (24L * 60 * 60 * 1000)).toInt()) {
+            0    -> getString(R.string.settings_remote_today)
+            1    -> getString(R.string.settings_remote_yesterday)
+            else -> getString(R.string.settings_remote_days, days)
         }
     }
 
@@ -1421,7 +1695,7 @@ class MainActivity : AppCompatActivity() {
             if (release.sizeBytes > 0) {
                 append(String.format(" %.1f MB.", release.sizeBytes / 1_048_576.0))
             }
-            if (release.notes.isNotBlank()) append("\n\n").append(release.notes)
+            if (release.notes.isNotBlank()) append("\n\n").append(unwrap(release.notes))
         }
 
         val view = showDialog(R.layout.dialog_update_available, cancelable = true)
@@ -1431,6 +1705,22 @@ class MainActivity : AppCompatActivity() {
         view.findViewById<View>(R.id.updateInstall).setOnClickListener { beginUpdate(release) }
         view.findViewById<View>(R.id.updateLater).setOnClickListener { dismissDialog() }
     }
+
+    /**
+     * A tag message is wrapped at 72 columns for git, and in a dialog those
+     * breaks land in the middle of sentences. Paragraphs and list items keep
+     * their own lines; the rest runs on as text.
+     */
+    private fun unwrap(notes: String): String =
+        notes.trim().split(Regex("\n\\s*\n")).joinToString("\n\n") { paragraph ->
+            paragraph.lines().map { it.trim() }.filter { it.isNotEmpty() }.fold("") { text, line ->
+                when {
+                    text.isEmpty() -> line
+                    line.startsWith("- ") || line.startsWith("* ") || line.startsWith("• ") -> "$text\n$line"
+                    else -> "$text $line"
+                }
+            }
+        }
 
     private fun beginUpdate(release: Updater.Release) {
         if (!Updater.canInstallPackages(this)) {
@@ -1504,7 +1794,10 @@ class MainActivity : AppCompatActivity() {
     private fun showLoading() {
         // A fresh attempt starts a fresh log; a switch or a retry while the
         // screen is already up is the same attempt continuing.
-        if (!loadingVisible) clearLog()
+        if (!loadingVisible) {
+            clearLog()
+            loadingGreeting.text = greeting()
+        }
         loadingVisible = true
         // Keep WebView VISIBLE at alpha=0 — INVISIBLE releases the GPU surface,
         // which causes a black flash when the surface is recreated on next show.
@@ -1519,7 +1812,7 @@ class MainActivity : AppCompatActivity() {
         if (!loadingVisible) return   // guard: prevent duplicate calls resetting alpha
         loadingVisible = false
         breathingAnimator?.cancel()
-        hideSwitchEmoji()
+        stopRoutePulse()
         hideRetryHint()
         loadingView.animate().alpha(0f).setDuration(350).withEndAction {
             loadingView.visibility = View.GONE
@@ -1529,76 +1822,111 @@ class MainActivity : AppCompatActivity() {
     }
 
     // ── The connect log ───────────────────────────────────────────────────────
-    // One line per thing that actually happened, newest at the bottom, the ones
-    // above it stepping back. It replaces a single status line that overwrote
-    // itself: on a slow connection that line was the only thing moving on the
-    // screen, and it never said what had already worked.
+    // What is happening now sits in the status card: the step's icon and words,
+    // and under them the address being dialled. Each step before it moves up
+    // into the log above the card, the newest nearest and the older ones
+    // stepping back — on a slow connection the card alone would be the only
+    // thing moving, and it would never say what had already worked.
 
-    private fun step(emoji: String, text: String) {
-        val newest = loadingLog.getChildAt(loadingLog.childCount - 1) as? TextView
-        // The retry loop says "Reconnecting..." every few seconds, and a log
-        // that repeats itself is a slower way of saying nothing.
-        if (newest?.tag == text) { repeatLine(newest); return }
+    private var stepIcon = 0
+    private var stepText: String? = null
+
+    private fun step(icon: Int, text: String) {
+        // The retry loop says "Reconnecting…" every few seconds, and a log that
+        // repeats itself is a slower way of saying nothing.
+        if (text == stepText) { repeatStep(); return }
+        // A step coming round again (Home Assistant loads twice when it returns
+        // you to the page you were on) moves down into the card rather than
+        // appearing in the log a second time.
+        for (i in loadingLog.childCount - 1 downTo 0) {
+            if ((loadingLog.getChildAt(i) as? TextView)?.text?.toString() == text) loadingLog.removeViewAt(i)
+        }
+        stepText?.let { logLine(stepIcon, it) }
+        stepIcon = icon
+        stepText = text
 
         val dp = resources.displayMetrics.density
-        val line = TextView(this).apply {
-            tag = text
-            this.text = "$emoji  $text"
-            setTextColor(0xFFBFBFBF.toInt())
-            textSize = 12.5f
-            letterSpacing = 0.02f
-            gravity = Gravity.CENTER_HORIZONTAL
-            alpha = 0f
-            translationY = 8f * dp
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-            ).apply { topMargin = (3 * dp).toInt() }
-        }
-        loadingLog.addView(line)
-        while (loadingLog.childCount > LOG_LINES) loadingLog.removeViewAt(0)
-        line.animate().alpha(1f).translationY(0f).setDuration(220).start()
-        dimOlderLines()
+        statusIcon.setImageResource(icon)
+        statusIcon.scaleX = 0.7f
+        statusIcon.scaleY = 0.7f
+        statusIcon.animate().scaleX(1f).scaleY(1f).setDuration(280)
+            .setInterpolator(OvershootInterpolator(2.2f)).start()
+        statusName.text = text
+        statusName.alpha = 0f
+        statusName.translationY = 6f * dp
+        statusName.animate().alpha(1f).translationY(0f).setDuration(220).start()
     }
 
-    /** The newest line reads at full strength; everything above it recedes. */
-    private fun dimOlderLines() {
-        val fades = floatArrayOf(1f, 0.5f, 0.32f, 0.2f)
-        for (index in 0 until loadingLog.childCount - 1) {
+    /** A step that is over: one line in the log, with its icon. */
+    private fun logLine(icon: Int, text: String) {
+        val dp = resources.displayMetrics.density
+        val line = TextView(this).apply {
+            this.text = text
+            tag = "muted"
+            textSize = 12f
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            compoundDrawablePadding = (6 * dp).toInt()
+            ContextCompat.getDrawable(context, icon)?.mutate()?.let {
+                it.setBounds(0, 0, (14 * dp).toInt(), (14 * dp).toInt())
+                setCompoundDrawablesRelative(it, null, null, null)
+            }
+            alpha = 0f
+            translationY = 10f * dp
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = (3 * dp).toInt(); gravity = Gravity.CENTER_HORIZONTAL }
+        }
+        Bubble.paint(line, Look.current)
+        loadingLog.addView(line)
+        while (loadingLog.childCount > LOG_LINES) loadingLog.removeViewAt(0)
+        // The newest reads clearest; everything above it recedes.
+        for (index in 0 until loadingLog.childCount) {
             val fromEnd = loadingLog.childCount - 1 - index
-            val view = loadingLog.getChildAt(index)
-            view.animate().alpha(fades.getOrElse(fromEnd) { 0.15f }).setDuration(220).start()
+            loadingLog.getChildAt(index).animate()
+                .alpha(LOG_FADES.getOrElse(fromEnd) { 0.15f }).translationY(0f).setDuration(240).start()
         }
     }
 
     /** Said again: worth a flicker, not a new line. */
-    private fun repeatLine(line: TextView) {
-        line.animate().cancel()
-        line.alpha = 0.55f
-        line.animate().alpha(1f).setDuration(280).start()
+    private fun repeatStep() {
+        statusName.animate().cancel()
+        statusName.alpha = 0.5f
+        statusName.translationY = 0f
+        statusName.animate().alpha(1f).setDuration(280).start()
     }
 
-    private fun clearLog() = loadingLog.removeAllViews()
+    private fun clearLog() {
+        loadingLog.removeAllViews()
+        stepText = null
+    }
 
     // ── Loading animation ─────────────────────────────────────────────────────
+    // Things arrive in turn rather than all at once: the coyote, its name and
+    // the greeting, the way in, then the log of getting there.
 
     private fun animateLoadingIn() {
         val dp = resources.displayMetrics.density
-        loadingLogo.alpha = 0f;    loadingLogo.scaleX = 0.82f; loadingLogo.scaleY = 0.82f
-        loadingTitle.alpha = 0f;   loadingTitle.translationY = 18f * dp
-        loadingSubtitle.alpha = 0f; loadingProgress.alpha = 0f
-        loadingLog.alpha = 0f;     loadingVersion.alpha = 0f
-        loadingEndpoint.alpha = 0f; loadingBrand.alpha = 0f
+        loadingLogo.alpha = 0f;     loadingLogo.scaleX = 0.82f; loadingLogo.scaleY = 0.82f
+        loadingTitle.alpha = 0f;    loadingTitle.translationY = 18f * dp
+        loadingGreeting.alpha = 0f; loadingGreeting.translationY = 10f * dp
+        routeRow.alpha = 0f;        routeRow.translationY = 10f * dp
+        loadingLog.alpha = 0f
+        statusCard.alpha = 0f;      statusCard.translationY = 14f * dp
+        loadingSettings.alpha = 0f; loadingBrand.alpha = 0f; loadingVersion.alpha = 0f
 
         loadingLogo.animate().alpha(1f).scaleX(1f).scaleY(1f)
             .setDuration(450).setStartDelay(80).withEndAction { startBreathing() }.start()
-        loadingTitle.animate().alpha(1f).translationY(0f).setDuration(340).setStartDelay(280).start()
-        loadingSubtitle.animate().alpha(0.65f).setDuration(300).setStartDelay(400).start()
-        loadingProgress.animate().alpha(1f).setDuration(280).setStartDelay(520).start()
-        loadingLog.animate().alpha(1f).setDuration(280).setStartDelay(600).start()
-        loadingEndpoint.animate().alpha(0.55f).setDuration(280).setStartDelay(660).start()
-        loadingBrand.animate().alpha(0.4f).setDuration(300).setStartDelay(700).start()
-        loadingVersion.animate().alpha(0.4f).setDuration(300).setStartDelay(700).start()
+        loadingTitle.animate().alpha(1f).translationY(0f).setDuration(340).setStartDelay(260).start()
+        loadingGreeting.animate().alpha(1f).translationY(0f).setDuration(320).setStartDelay(380).start()
+        routeRow.animate().alpha(1f).translationY(0f).setDuration(300).setStartDelay(480).start()
+        loadingLog.animate().alpha(1f).setDuration(280).setStartDelay(560).start()
+        statusCard.animate().alpha(1f).translationY(0f).setDuration(340).setStartDelay(560)
+            .setInterpolator(DecelerateInterpolator()).start()
+        loadingSettings.animate().alpha(1f).setDuration(300).setStartDelay(720).start()
+        loadingBrand.animate().alpha(1f).setDuration(300).setStartDelay(720).start()
+        loadingVersion.animate().alpha(1f).setDuration(300).setStartDelay(720).start()
     }
 
     private fun startBreathing() {
@@ -1614,48 +1942,82 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ── Local ⇄ remote switch animation ───────────────────────────────────────
-    // Plays out on top of the loading screen: 🏠 on the left, ☁️ on the right,
-    // the winning side snaps forward while the other fades back, then both
-    // settle away again after a short hold — the breathing logo underneath
-    // keeps communicating "still working" for however long the real page load takes.
+    // ── Which way in: Local or Remote ─────────────────────────────────────────
+    // Two of Bubble's sub-buttons under the greeting. While the app is still
+    // finding its way they breathe together; the side that wins fills with the
+    // person's colour and pops, and the other steps back. The remote one also
+    // shows the tunnel coming up: key, closed lock, open lock.
 
-    private fun showSwitchEmoji(pending: Boolean) {
-        switchLocalColumn.alpha = 0.5f;  switchLocalColumn.scaleX = 0.88f;  switchLocalColumn.scaleY = 0.88f
-        switchRemoteColumn.alpha = 0.5f; switchRemoteColumn.scaleX = 0.88f; switchRemoteColumn.scaleY = 0.88f
-        // Reset to the neutral "which side" glyph — setSwitchStage() only takes
-        // over once connectRemote() actually starts the VPN handshake.
-        switchRemoteEmoji.text = "☁️"
-        if (pending) step("🧭", "Finding connection...") else step("🔀", "Switching...")
+    private var routeChosen: HaTarget? = null
+    private var routeRemoteIcon = R.drawable.ic_mdi_cloud_outline
+    private var routePulse: ObjectAnimator? = null
+
+    private fun showSwitch(pending: Boolean) {
+        routeRemoteIcon = R.drawable.ic_mdi_cloud_outline
+        drawRoute(null)
+        if (pending) step(R.drawable.ic_mdi_compass_outline, "Finding connection…")
+        else step(R.drawable.ic_mdi_swap_horizontal, "Switching…")
     }
 
     /** Key → closed lock → open lock, driven by connectRemote()'s own stages — see there. */
-    private enum class SwitchStage(val emoji: String) {
-        KEY("🔑"), LOCK_CLOSED("🔒"), LOCK_OPEN("🔓")
+    private enum class SwitchStage(val icon: Int) {
+        KEY(R.drawable.ic_mdi_key_variant),
+        LOCK_CLOSED(R.drawable.ic_mdi_lock_outline),
+        LOCK_OPEN(R.drawable.ic_mdi_lock_open_variant_outline),
     }
 
     private fun setSwitchStage(stage: SwitchStage) {
-        switchRemoteEmoji.text = stage.emoji
-        switchRemoteColumn.animate().alpha(1f).scaleX(1.15f).scaleY(1.15f).setDuration(220).start()
+        routeRemoteIcon = stage.icon
+        drawRoute(routeChosen)
+        pop(routeRemote)
     }
 
-    private fun revealSwitchEmoji(to: HaTarget) {
-        val (winner, loser) = if (to == HaTarget.LOCAL)
-            switchLocalColumn to switchRemoteColumn
-        else
-            switchRemoteColumn to switchLocalColumn
-
-        winner.animate().alpha(1f).scaleX(1.3f).scaleY(1.3f).setDuration(320)
-            .setInterpolator(OvershootInterpolator()).start()
-        loser.animate().alpha(0.18f).scaleX(0.7f).scaleY(0.7f).setDuration(320).start()
-
-        if (to == HaTarget.LOCAL) step("🏠", "Local Network")
-        else step("☁️", "Remote Connection")
+    private fun revealSwitch(to: HaTarget) {
+        drawRoute(to)
+        pop(if (to == HaTarget.LOCAL) routeLocal else routeRemote)
+        if (to == HaTarget.LOCAL) step(R.drawable.ic_mdi_home_outline, "Local network")
+        else step(R.drawable.ic_mdi_cloud_outline, "Remote connection")
     }
 
-    private fun hideSwitchEmoji() {
-        switchLocalColumn.animate().alpha(0f).scaleX(0.88f).scaleY(0.88f).setDuration(250).start()
-        switchRemoteColumn.animate().alpha(0f).scaleX(0.88f).scaleY(0.88f).setDuration(250).start()
+    private fun drawRoute(chosen: HaTarget?) {
+        routeChosen = chosen
+        val look = Look.current
+        fun pill(view: TextView, on: Boolean, icon: Int) {
+            view.tag = if (on) "sub-on" else "sub"
+            view.setCompoundDrawablesRelativeWithIntrinsicBounds(icon, 0, 0, 0)
+            Bubble.paint(view, look)
+            view.animate().alpha(if (chosen == null || on) 1f else 0.4f).setDuration(240).start()
+        }
+        pill(routeLocal, chosen == HaTarget.LOCAL, R.drawable.ic_mdi_home_outline)
+        pill(routeRemote, chosen == HaTarget.REMOTE, routeRemoteIcon)
+        if (chosen == null) startRoutePulse() else stopRoutePulse()
+    }
+
+    private fun startRoutePulse() {
+        if (routePulse?.isRunning == true) return
+        routePulse = ObjectAnimator.ofPropertyValuesHolder(
+            routeRow,
+            PropertyValuesHolder.ofFloat("scaleX", 1f, 0.94f),
+            PropertyValuesHolder.ofFloat("scaleY", 1f, 0.94f)
+        ).apply {
+            duration = 650; repeatCount = ObjectAnimator.INFINITE
+            repeatMode = ObjectAnimator.REVERSE
+            interpolator = AccelerateDecelerateInterpolator()
+            start()
+        }
+    }
+
+    private fun stopRoutePulse() {
+        routePulse?.cancel()
+        routePulse = null
+        routeRow.animate().scaleX(1f).scaleY(1f).setDuration(160).start()
+    }
+
+    private fun pop(view: View) {
+        view.scaleX = 0.88f
+        view.scaleY = 0.88f
+        view.animate().scaleX(1f).scaleY(1f).setDuration(380)
+            .setInterpolator(OvershootInterpolator(3f)).start()
     }
 
     // ── Connection trouble (replaces any browser-shown error) ────────────────
@@ -1665,12 +2027,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun enterTrouble(code: Int, keepStatus: Boolean = false) {
         consecutiveFailures++
-        hideSwitchEmoji()
         if (!loadingVisible) showLoading()
         // connectRemote() already leaves a specific status behind (which step
         // failed, or that the user cancelled) — the generic fallback would
         // only make VPN failures less informative than every other error path.
-        if (!keepStatus) step(troubleEmoji(code), troubleMessage(code))
+        if (!keepStatus) step(troubleIcon(code), troubleMessage(code))
 
         val persistent = consecutiveFailures > SILENT_RETRY_ATTEMPTS
         if (persistent) showRetryHint() else hideRetryHint()
@@ -1684,26 +2045,230 @@ class MainActivity : AppCompatActivity() {
         mainHandler.postDelayed(errorRetryRunnable, delay)
     }
 
-    private fun troubleEmoji(code: Int): String = when (code) {
-        WebViewClient.ERROR_FAILED_SSL_HANDSHAKE, ERROR_SSL -> "⚠️"
-        WebViewClient.ERROR_AUTHENTICATION                  -> "🔐"
-        else                                                -> "🔄"
+    private fun troubleIcon(code: Int): Int = when (code) {
+        WebViewClient.ERROR_FAILED_SSL_HANDSHAKE, ERROR_SSL -> R.drawable.ic_mdi_alert_outline
+        WebViewClient.ERROR_AUTHENTICATION                  -> R.drawable.ic_mdi_account_lock_outline
+        else                                                -> R.drawable.ic_mdi_refresh
     }
 
     private fun troubleMessage(code: Int): String = when (code) {
         WebViewClient.ERROR_FAILED_SSL_HANDSHAKE, ERROR_SSL -> "Security warning — check your connection"
         WebViewClient.ERROR_AUTHENTICATION                  -> "Sign-in required"
-        else                                                -> "Reconnecting..."
+        else                                                -> "Reconnecting…"
     }
 
     private fun showRetryHint() {
         loadingRetryHint.isClickable = true
-        loadingRetryHint.animate().alpha(0.8f).setDuration(250).start()
+        loadingRetryHint.animate().alpha(1f).setDuration(250).start()
     }
 
     private fun hideRetryHint() {
         loadingRetryHint.isClickable = false
         loadingRetryHint.animate().alpha(0f).setDuration(200).start()
+    }
+
+    // ── Handing over to Home Assistant ───────────────────────────────────────
+    // A loaded page is not a drawn dashboard: Home Assistant's frontend boots
+    // after it, behind a launch screen of its own (its logo, "Loading…"). Lifting
+    // ours at onPageFinished showed that one in between, a second blue screen on
+    // the way in. So ours stays until Home Assistant takes its launch screen
+    // down, and the app goes from its own screen straight to the dashboard.
+
+    private var frontendChecks = 0
+
+    private val frontendCheck = object : Runnable {
+        override fun run() {
+            webView.evaluateJavascript(FRONTEND_READY_JS) { ready ->
+                if (!loadingVisible) return@evaluateJavascript
+                if (ready == "true" || ++frontendChecks >= FRONTEND_CHECKS) hideLoading()
+                else mainHandler.postDelayed(this, FRONTEND_CHECK_MS)
+            }
+        }
+    }
+
+    private fun awaitFrontend(url: String) {
+        mainHandler.removeCallbacks(frontendCheck)
+        frontendChecks = 0
+        if (loadingVisible && isHaAppHost(url)) step(R.drawable.ic_mdi_home_assistant, "Starting Home Assistant…")
+        mainHandler.postDelayed(frontendCheck, FRONTEND_CHECK_MS)
+    }
+
+    // ── The person's look and name ────────────────────────────────────────────
+    // The app's own screens wear the look Home Assistant shows this person (see
+    // Look.kt), and greet them by the name it knows them by. Both are read off
+    // the page the app has loaded: a moment after it lands, once Home Assistant
+    // has answered the page's own questions, and again whenever the app goes to
+    // the background, which catches a colour changed in the panel meanwhile.
+
+    private val readPageRunnable = Runnable { readPage() }
+
+    private fun readPageSoon() {
+        mainHandler.removeCallbacks(readPageRunnable)
+        READ_PAGE_AFTER_MS.forEach { mainHandler.postDelayed(readPageRunnable, it) }
+    }
+
+    private fun readPage() {
+        val url = webView.url ?: return
+        if (!isHaAppHost(url)) return
+        webView.evaluateJavascript(PAGE_JS) { result -> onPageRead(result) }
+    }
+
+    private fun onPageRead(result: String?) {
+        if (isFinishing || isDestroyed) return
+        val answer = runCatching { JSONObject(result ?: return) }.getOrNull() ?: return
+        when {
+            answer.optBoolean("login") -> prefs.edit().remove(KEY_USER_NAME).apply()
+            !answer.isNull("user") -> answer.optString("user").trim().takeIf { it.isNotEmpty() }
+                ?.let { prefs.edit().putString(KEY_USER_NAME, it).apply() }
+        }
+        if (loadingVisible) loadingGreeting.text = greeting()
+        val look = Look.fromPage(this, answer.optJSONObject("look")) ?: return
+        Log.i(TAG, "look: ${look.familyName} ${look.shadeName}, ${look.styleName} ${look.fps} fps, " +
+            "${if (look.animate) "animated" else "still"}, ${look.scheme}")
+        applyLook(look)
+    }
+
+    /** Puts [look] on everything the app draws itself. */
+    private fun applyLook(look: Look) {
+        window.setBackgroundDrawable(ColorDrawable(look.bg))
+        Bubble.paint(rootLayout, look)
+        when (activeDialog?.fullScreen) {
+            false -> dialogCard.background = Bubble.popup(this, look)
+            true  -> dialogScrim.setBackgroundColor(look.bg)
+            null  -> Unit
+        }
+        applySystemBars(look)
+        refreshSettings?.invoke()
+    }
+
+    /** Good evening, and the person's name once a page has said it. */
+    private fun greeting(): String {
+        val part = getString(when (Calendar.getInstance().get(Calendar.HOUR_OF_DAY)) {
+            in 5..11  -> R.string.greeting_morning
+            in 12..16 -> R.string.greeting_afternoon
+            in 17..22 -> R.string.greeting_evening
+            else      -> R.string.greeting_night
+        })
+        val name = prefs.getString(KEY_USER_NAME, null)
+        return if (name.isNullOrBlank()) part else getString(R.string.greeting_named, part, name)
+    }
+
+    /** Keeps a column to [maxDp] on a wide screen, centred, as the panel keeps its sections. */
+    private fun capWidth(view: View, maxDp: Int) {
+        val max = (maxDp * resources.displayMetrics.density).toInt()
+        val parent = view.parent as? View ?: return
+        parent.addOnLayoutChangeListener { _, left, _, right, _, _, _, _, _ ->
+            val want = if (right - left > max) max else ViewGroup.LayoutParams.MATCH_PARENT
+            if (view.layoutParams.width != want) view.post {
+                view.layoutParams = view.layoutParams.apply { width = want }
+            }
+        }
+    }
+
+    // ── Screen: the status bar, and staying awake on the charger ─────────────
+
+    /**
+     * The status bar and the navigation bar, hidden or shown as App settings say;
+     * a swipe in from that edge shows a hidden one for a moment. Either one
+     * hidden gives its height to the page (see the insets listener).
+     */
+    private fun applyBars() {
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        fun show(type: Int, hidden: Boolean) = if (hidden) controller.hide(type) else controller.show(type)
+        show(WindowInsetsCompat.Type.statusBars(), prefs.getBoolean(KEY_HIDE_STATUS_BAR, false))
+        show(WindowInsetsCompat.Type.navigationBars(), prefs.getBoolean(KEY_HIDE_NAV_BAR, false))
+    }
+
+    /** The bars' icons light over a dark look and dark over a light one. */
+    private fun applySystemBars(look: Look) {
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        controller.isAppearanceLightStatusBars = !look.dark
+        controller.isAppearanceLightNavigationBars = !look.dark
+        // Three-button navigation would get a translucent plate of the system's
+        // choosing; the look's own background is behind it already.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) window.isNavigationBarContrastEnforced = false
+    }
+
+    private var charging = false
+
+    /** The charger, while the app is in front (registered in onStart, dropped in onStop). */
+    private val powerReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            charging = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) != 0
+            applyKeepAwake()
+            refreshSettings?.invoke()
+        }
+    }
+
+    /** On a charger, with the setting on, the screen does not go dark by itself. */
+    private fun applyKeepAwake() {
+        if (prefs.getBoolean(KEY_AWAKE_CHARGING, false) && charging)
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        else window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+    }
+
+    // ── File uploads ──────────────────────────────────────────────────────────
+    // A page's "choose a file" does nothing in a WebView until the app answers
+    // it, and the CV Panel asks for several: voice clips for the pools, car trips
+    // from a CSV, pictures in Home Assistant itself. Android's picker answers.
+
+    private var fileCallback: ValueCallback<Array<Uri>>? = null
+    private lateinit var filePicker: ActivityResultLauncher<Intent>
+
+    /** Set while the picker is up, so onStop leaves the tunnel and the page alone. */
+    private var pickingFiles = false
+
+    private fun chooseFiles(callback: ValueCallback<Array<Uri>>, params: WebChromeClient.FileChooserParams): Boolean {
+        // One at a time: an earlier chooser nobody answered is answered "nothing".
+        fileCallback?.onReceiveValue(null)
+        fileCallback = callback
+        return runCatching {
+            pickingFiles = true
+            filePicker.launch(fileIntent(params))
+            true
+        }.getOrElse {
+            pickingFiles = false
+            fileCallback = null
+            false
+        }
+    }
+
+    private fun onFilesChosen(result: ActivityResult) {
+        pickingFiles = false
+        val callback = fileCallback ?: return
+        fileCallback = null
+        val data = result.data
+        val clip = data?.clipData
+        callback.onReceiveValue(when {
+            result.resultCode != RESULT_OK || data == null -> null
+            clip != null -> Array(clip.itemCount) { clip.getItemAt(it).uri }
+            data.data != null -> arrayOf(data.data!!)
+            else -> null
+        })
+    }
+
+    /**
+     * Android's picker for what the page accepts. MIME types filter it. A file
+     * extension (".csv") has no type Android can be trusted with — the same file
+     * is text/csv in one app and something else in the next — so a page that
+     * names extensions is offered every file, and checks the one chosen itself,
+     * as it does in a browser.
+     */
+    private fun fileIntent(params: WebChromeClient.FileChooserParams): Intent {
+        val accepted = params.acceptTypes.flatMap { it.split(',') }
+            .map { it.trim().lowercase() }.filter { it.isNotEmpty() }
+        val types = accepted.filter { '/' in it }.distinct()
+        val anyFile = accepted.isEmpty() || accepted.any { it.startsWith(".") } || "*/*" in types
+        return Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).apply {
+            when {
+                anyFile         -> type = "*/*"
+                types.size == 1 -> type = types[0]
+                else            -> { type = "*/*"; putExtra(Intent.EXTRA_MIME_TYPES, types.toTypedArray()) }
+            }
+            if (params.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE)
+                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+        }
     }
 
     @Deprecated("Deprecated in API 33")

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- mdi-dialpad, Material Design Icons 7.4.47 (Pictogrammers, Apache 2.0). design/icons.py -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M 12 19 A 2 2 0 0 0 10 21 A 2 2 0 0 0 12 23 A 2 2 0 0 0 14 21 A 2 2 0 0 0 12 19 M 6 1 A 2 2 0 0 0 4 3 A 2 2 0 0 0 6 5 A 2 2 0 0 0 8 3 A 2 2 0 0 0 6 1 M 6 7 A 2 2 0 0 0 4 9 A 2 2 0 0 0 6 11 A 2 2 0 0 0 8 9 A 2 2 0 0 0 6 7 M 6 13 A 2 2 0 0 0 4 15 A 2 2 0 0 0 6 17 A 2 2 0 0 0 8 15 A 2 2 0 0 0 6 13 M 18 5 A 2 2 0 0 0 20 3 A 2 2 0 0 0 18 1 A 2 2 0 0 0 16 3 A 2 2 0 0 0 18 5 M 12 13 A 2 2 0 0 0 10 15 A 2 2 0 0 0 12 17 A 2 2 0 0 0 14 15 A 2 2 0 0 0 12 13 M 18 13 A 2 2 0 0 0 16 15 A 2 2 0 0 0 18 17 A 2 2 0 0 0 20 15 A 2 2 0 0 0 18 13 M 18 7 A 2 2 0 0 0 16 9 A 2 2 0 0 0 18 11 A 2 2 0 0 0 20 9 A 2 2 0 0 0 18 7 M 12 7 A 2 2 0 0 0 10 9 A 2 2 0 0 0 12 11 A 2 2 0 0 0 14 9 A 2 2 0 0 0 12 7 M 12 1 A 2 2 0 0 0 10 3 A 2 2 0 0 0 12 5 A 2 2 0 0 0 14 3 A 2 2 0 0 0 12 1 Z" />
+</vector>

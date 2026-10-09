@@ -1,225 +1,309 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The app's own settings, as opposed to Home Assistant's. Everything here is
-     about the container: which screen it replaces, which links reach it, and
-     which build it is. Hosted in dialogCard, not a system dialog — colors are
-     hardcoded for the dark card rather than ?android:attr/textColorPrimary,
-     which used to track the AlertDialog's own (day/night) background and would
-     go invisible against our always-dark card on a light-mode system. -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<!-- The app's own settings, as opposed to Home Assistant's: how it looks, the
+     screen, the connection, links and updates. A page of the CV Panel in all but
+     address: the person's background, a head card, separators, and Bubble button
+     cards that follow the panel's rules (a toggle row: name and note left, switch
+     right; a list item: icon box, name and state, chevron right).
+
+     Shown full screen through MainActivity.showDialog(); the colours come from
+     the person's look, see Bubble.paint(). -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:orientation="vertical">
+    android:layout_height="match_parent">
 
-    <LinearLayout
+    <com.cvapp.BackdropView
+        android:id="@+id/settingsSky"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:gravity="center_vertical"
-        android:paddingStart="24dp"
-        android:paddingEnd="8dp"
-        android:paddingTop="16dp"
-        android:paddingBottom="8dp">
-
-        <TextView
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="@string/settings_title"
-            android:textColor="#FFFFFFFF"
-            android:textSize="17sp"
-            android:textStyle="bold" />
-
-        <TextView
-            android:id="@+id/settingsClose"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:text="✕"
-            android:textColor="#FF888888"
-            android:textSize="16sp"
-            android:gravity="center"
-            android:clickable="true"
-            android:focusable="true"
-            android:background="?attr/selectableItemBackgroundBorderless" />
-
-    </LinearLayout>
+        android:layout_height="match_parent" />
 
     <ScrollView
+        android:id="@+id/settingsScroll"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content">
+        android:layout_height="match_parent"
+        android:fillViewport="true"
+        android:scrollbars="none">
 
         <LinearLayout
+            android:id="@+id/settingsColumn"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
             android:orientation="vertical"
-            android:paddingStart="24dp"
-            android:paddingEnd="24dp"
-            android:paddingTop="0dp"
-            android:paddingBottom="8dp">
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:paddingTop="12dp"
+            android:paddingBottom="28dp">
 
-            <!-- ── Home screen ── -->
-            <LinearLayout
-                android:id="@+id/settingsHomeRow"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center_vertical"
-                android:background="?attr/selectableItemBackground"
-                android:clickable="true"
-                android:focusable="true"
-                android:paddingTop="12dp"
-                android:paddingBottom="12dp">
+            <!-- The head, like a panel section's: icon, name, and the way out. -->
+            <LinearLayout style="@style/Bubble.Card">
 
-                <LinearLayout
+                <ImageView
+                    style="@style/Bubble.Icon"
+                    android:src="@drawable/ic_mdi_cog" />
+
+                <TextView
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:orientation="vertical">
+                    android:layout_marginStart="10dp"
+                    android:text="@string/settings_title"
+                    android:fontFamily="@font/inter_semibold"
+                    android:textSize="15sp"
+                    android:tag="text"
+                    android:accessibilityHeading="true" />
 
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/settings_home_title"
-                        android:textSize="16sp"
-                        android:textColor="#FFFFFFFF" />
+                <ImageView
+                    android:id="@+id/settingsClose"
+                    style="@style/Bubble.SubIcon"
+                    android:src="@drawable/ic_mdi_close"
+                    android:contentDescription="@string/settings_close" />
 
-                    <TextView
-                        android:id="@+id/settingsHomeSubtitle"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginTop="2dp"
-                        android:textSize="13sp"
-                        android:textColor="#FFAAAAAA" />
+            </LinearLayout>
 
+            <!-- ── Look ── -->
+            <LinearLayout style="@style/Bubble.Separator">
+                <ImageView style="@style/Bubble.Separator.Icon" android:src="@drawable/ic_mdi_palette_outline" />
+                <TextView style="@style/Bubble.Separator.Name" android:text="@string/settings_look_section" />
+                <View style="@style/Bubble.Separator.Bar" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/settingsLookRow"
+                style="@style/Bubble.Card"
+                android:clickable="true"
+                android:focusable="true">
+
+                <!-- The colour itself, round, as the panel's Appearance card shows it. -->
+                <ImageView
+                    android:id="@+id/settingsLookSwatch"
+                    style="@style/Bubble.Icon"
+                    android:padding="9dp"
+                    android:tag="swatch" />
+
+                <LinearLayout style="@style/Bubble.Text">
+                    <TextView android:id="@+id/settingsLookName" style="@style/Bubble.Name" />
+                    <TextView android:id="@+id/settingsLookState" style="@style/Bubble.State" />
                 </LinearLayout>
 
-                <androidx.appcompat.widget.SwitchCompat
-                    android:id="@+id/settingsHomeSwitch"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginStart="16dp" />
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/ic_mdi_chevron_right"
+                    android:tag="muted"
+                    android:importantForAccessibility="no" />
 
             </LinearLayout>
 
             <TextView
-                android:id="@+id/settingsHomeNote"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="@string/settings_home_note"
-                android:textSize="12sp"
-                android:textColor="#FFAAAAAA"
-                android:alpha="0.75"
-                android:layout_marginBottom="8dp" />
+                android:id="@+id/settingsLookNote"
+                style="@style/Bubble.Note" />
 
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:background="#FF2A2A2A" />
+            <!-- ── Screen ── -->
+            <LinearLayout style="@style/Bubble.Separator">
+                <ImageView style="@style/Bubble.Separator.Icon" android:src="@drawable/ic_mdi_cellphone" />
+                <TextView style="@style/Bubble.Separator.Name" android:text="@string/settings_screen_section" />
+                <View style="@style/Bubble.Separator.Bar" />
+            </LinearLayout>
 
-            <!-- ── Links ── -->
+            <LinearLayout
+                android:id="@+id/settingsStatusBarRow"
+                style="@style/Bubble.Card"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView style="@style/Bubble.Icon" android:src="@drawable/ic_mdi_dock_top" />
+
+                <LinearLayout style="@style/Bubble.Text">
+                    <TextView style="@style/Bubble.Name" android:text="@string/settings_status_bar_title" />
+                    <TextView android:id="@+id/settingsStatusBarState" style="@style/Bubble.State" />
+                </LinearLayout>
+
+                <com.cvapp.BubbleSwitch
+                    android:id="@+id/settingsStatusBarSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="@string/settings_status_bar_title" />
+
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/settingsNavBarRow"
+                style="@style/Bubble.Card"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView style="@style/Bubble.Icon" android:src="@drawable/ic_mdi_dock_bottom" />
+
+                <LinearLayout style="@style/Bubble.Text">
+                    <TextView style="@style/Bubble.Name" android:text="@string/settings_nav_bar_title" />
+                    <TextView android:id="@+id/settingsNavBarState" style="@style/Bubble.State" />
+                </LinearLayout>
+
+                <com.cvapp.BubbleSwitch
+                    android:id="@+id/settingsNavBarSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="@string/settings_nav_bar_title" />
+
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/settingsAwakeRow"
+                style="@style/Bubble.Card"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView style="@style/Bubble.Icon" android:src="@drawable/ic_mdi_power_plug_outline" />
+
+                <LinearLayout style="@style/Bubble.Text">
+                    <TextView style="@style/Bubble.Name" android:text="@string/settings_awake_title" />
+                    <TextView android:id="@+id/settingsAwakeState" style="@style/Bubble.State" />
+                </LinearLayout>
+
+                <com.cvapp.BubbleSwitch
+                    android:id="@+id/settingsAwakeSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="@string/settings_awake_title" />
+
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/settingsHomeRow"
+                style="@style/Bubble.Card"
+                android:clickable="true"
+                android:focusable="true">
+
+                <ImageView style="@style/Bubble.Icon" android:src="@drawable/ic_mdi_home_outline" />
+
+                <LinearLayout style="@style/Bubble.Text">
+                    <TextView style="@style/Bubble.Name" android:text="@string/settings_home_title" />
+                    <TextView android:id="@+id/settingsHomeSubtitle" style="@style/Bubble.State" />
+                </LinearLayout>
+
+                <com.cvapp.BubbleSwitch
+                    android:id="@+id/settingsHomeSwitch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:contentDescription="@string/settings_home_title" />
+
+            </LinearLayout>
+
+            <TextView
+                style="@style/Bubble.Note"
+                android:text="@string/settings_home_note" />
+
+            <!-- ── Connection ── -->
+            <LinearLayout style="@style/Bubble.Separator">
+                <ImageView style="@style/Bubble.Separator.Icon" android:src="@drawable/ic_mdi_access_point_network" />
+                <TextView style="@style/Bubble.Separator.Name" android:text="@string/settings_connection_section" />
+                <View style="@style/Bubble.Separator.Bar" />
+            </LinearLayout>
+
+            <LinearLayout style="@style/Bubble.Card">
+
+                <ImageView android:id="@+id/settingsRouteIcon" style="@style/Bubble.Icon" />
+
+                <LinearLayout style="@style/Bubble.Text">
+                    <TextView android:id="@+id/settingsRouteName" style="@style/Bubble.Name" />
+                    <TextView
+                        android:id="@+id/settingsRouteState"
+                        style="@style/Bubble.State"
+                        android:fontFamily="@font/jetbrains_mono"
+                        android:textSize="11sp" />
+                </LinearLayout>
+
+            </LinearLayout>
+
+            <LinearLayout style="@style/Bubble.Card">
+
+                <ImageView style="@style/Bubble.Icon" android:src="@drawable/ic_mdi_key_variant" />
+
+                <LinearLayout style="@style/Bubble.Text">
+                    <TextView style="@style/Bubble.Name" android:text="@string/settings_remote_title" />
+                    <TextView android:id="@+id/settingsRemoteState" style="@style/Bubble.State" />
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/settingsRemoteForget"
+                    style="@style/Bubble.Sub"
+                    android:text="@string/settings_remote_forget"
+                    android:tag="danger"
+                    android:visibility="gone" />
+
+            </LinearLayout>
+
+            <!-- ── App ── -->
+            <LinearLayout style="@style/Bubble.Separator">
+                <ImageView style="@style/Bubble.Separator.Icon" android:src="@drawable/ic_mdi_information_outline" />
+                <TextView style="@style/Bubble.Separator.Name" android:text="@string/settings_app_section" />
+                <View style="@style/Bubble.Separator.Bar" />
+            </LinearLayout>
+
             <LinearLayout
                 android:id="@+id/settingsLinksRow"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:background="?attr/selectableItemBackground"
+                style="@style/Bubble.Card"
                 android:clickable="true"
-                android:focusable="true"
-                android:paddingTop="14dp"
-                android:paddingBottom="14dp">
+                android:focusable="true">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/settings_links_title"
-                    android:textSize="16sp"
-                    android:textColor="#FFFFFFFF" />
+                <ImageView style="@style/Bubble.Icon" android:src="@drawable/ic_mdi_link_variant" />
 
-                <TextView
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
-                    android:text="@string/settings_links_subtitle"
-                    android:textSize="13sp"
-                    android:textColor="#FFAAAAAA" />
+                <LinearLayout style="@style/Bubble.Text">
+                    <TextView style="@style/Bubble.Name" android:text="@string/settings_links_title" />
+                    <TextView style="@style/Bubble.State" android:text="@string/settings_links_subtitle" />
+                </LinearLayout>
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/ic_mdi_chevron_right"
+                    android:tag="muted"
+                    android:importantForAccessibility="no" />
 
             </LinearLayout>
 
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:background="#FF2A2A2A" />
-
-            <!-- ── Updates ── -->
             <LinearLayout
                 android:id="@+id/settingsUpdateRow"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:background="?attr/selectableItemBackground"
+                style="@style/Bubble.Card"
                 android:clickable="true"
-                android:focusable="true"
-                android:paddingTop="14dp"
-                android:paddingBottom="14dp">
+                android:focusable="true">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/settings_update_title"
-                    android:textSize="16sp"
-                    android:textColor="#FFFFFFFF" />
+                <ImageView style="@style/Bubble.Icon" android:src="@drawable/ic_mdi_update" />
 
-                <TextView
-                    android:id="@+id/settingsUpdateSubtitle"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="2dp"
-                    android:textSize="13sp"
-                    android:textColor="#FFAAAAAA" />
+                <LinearLayout style="@style/Bubble.Text">
+                    <TextView style="@style/Bubble.Name" android:text="@string/settings_update_title" />
+                    <TextView android:id="@+id/settingsUpdateSubtitle" style="@style/Bubble.State" />
+                </LinearLayout>
+
+                <ImageView
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
+                    android:src="@drawable/ic_mdi_chevron_right"
+                    android:tag="muted"
+                    android:importantForAccessibility="no" />
 
             </LinearLayout>
 
-            <View
-                android:layout_width="match_parent"
-                android:layout_height="1dp"
-                android:background="#FF2A2A2A" />
-
-            <!-- ── About ── -->
+            <!-- Where the app comes from: at the bottom right, like a form's actions. -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
                 android:orientation="horizontal"
-                android:paddingTop="14dp"
-                android:paddingBottom="10dp">
+                android:gravity="end">
 
                 <TextView
                     android:id="@+id/settingsSiteLink"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/settings_about_site"
-                    android:textColor="#FF8B9FF4"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    android:padding="8dp"
-                    android:gravity="center"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:background="?attr/selectableItemBackground" />
+                    style="@style/Bubble.Sub"
+                    android:drawableStart="@drawable/ic_mdi_web"
+                    android:text="@string/settings_about_site" />
 
                 <TextView
                     android:id="@+id/settingsGithubLink"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:text="@string/settings_about_github"
-                    android:textColor="#FF8B9FF4"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    android:padding="8dp"
-                    android:gravity="center"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:background="?attr/selectableItemBackground" />
+                    style="@style/Bubble.Sub"
+                    android:layout_marginStart="8dp"
+                    android:drawableStart="@drawable/ic_mdi_github"
+                    android:text="@string/settings_about_github" />
 
             </LinearLayout>
 
@@ -227,4 +311,4 @@
 
     </ScrollView>
 
-</LinearLayout>
+</FrameLayout>

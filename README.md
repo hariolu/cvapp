@@ -34,6 +34,10 @@ permissions, both listed in
 [`AndroidManifest.xml`](app/src/main/AndroidManifest.xml): network access, and
 installing updates.
 
+The typeface (Inter, JetBrains Mono) and the icons (Material Design Icons) are
+files inside the app, the same ones Coyotes Vision's pages use, under their own
+open licences — see [`design/README.md`](design/README.md).
+
 For what Coyotes Vision *is*, and everything that is not about this APK, see
 **[coyotes.vision](https://coyotes.vision)**.
 
@@ -70,6 +74,19 @@ crashes are absorbed into the loading screen, which keeps retrying quietly
 instead of dropping you on an error page. The page you were reading is
 remembered and restored.
 
+**Shows its work.** The loading screen says what it is doing, one step at a
+time — finding the way in, local or remote, the tunnel coming up — with the
+address it is dialling, and stays until Home Assistant has drawn your dashboard.
+
+**Looks like your house.** The app's own screens — loading, settings, sign-in —
+wear the look you picked in the CV Panel: your colour, your background (or none,
+if you turned it off), in the mode Home Assistant shows you. It reads them off the
+page it has loaded, so it follows whatever the house draws, and it greets you by
+the name Home Assistant knows you by.
+
+**Takes files.** "Choose a file" on a page works: voice clips and trip imports in
+the CV Panel, pictures and backups in Home Assistant itself.
+
 **Can be the home screen.** Turn it on and the Home button opens your dashboard
 instead of a grid of icons — the point of an old phone or a tablet on the wall.
 It is off until you ask for it: until then CVapp is not even listed among the
@@ -82,10 +99,21 @@ panels and open dialogs, one step at a time.
 
 ## App settings
 
-Home-screen mode, link handling and the update check live in one dialog.
-**Long-press the loading screen** to open it. If the app is already connected,
-`cvha://app-settings` opens it from anywhere — a dashboard button, a home-screen
-shortcut, or `adb`.
+The app's own settings live on one page: **the gear on the loading screen**, or a
+long-press anywhere on it. If the app is already connected, `cvha://app-settings`
+opens it from anywhere — a dashboard button, a home-screen shortcut, or `adb`.
+
+- **Look** — your colour and background, and a way to the CV Panel to change them.
+- **Screen** — hide the status bar or the navigation bar (a swipe in from that
+  edge shows it for a moment); keep the screen on while charging, for a phone on
+  a stand or a tablet on the wall; and home-screen mode. A hidden bar gives its
+  height to the dashboard — at the top, right up to the camera's edge or past it.
+- **Connection** — whether you are at home or through the tunnel, the address,
+  and how your remote access stands, with a way to forget it on this phone: the
+  next time you are away, the app asks the bot for a new code.
+- **App** — which links open here, and the update check.
+
+Long-press the app's icon for shortcuts to CV Mail, Car Trips and App settings.
 
 ## Install
 

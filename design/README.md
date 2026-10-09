@@ -64,3 +64,32 @@ the app's loading screen — with the mark at 330 px on the left and, to its rig
 
 The social preview can only be uploaded through the web interface
 (**Settings → Social preview**); GitHub has no API for it.
+
+# Type and icons
+
+The app's own screens use the same typeface and icons as Coyotes Vision's pages,
+so both are built from what the house's engine ships rather than picked here.
+Like the artwork, the results are committed; these are the notes for rebuilding.
+
+| Files | From | Built by |
+|---|---|---|
+| `app/src/main/res/font/inter_*.ttf`, `jetbrains_mono.ttf` | `Inter-Variable.woff2` and `JetBrainsMono-Variable.woff2` in cv-core's `component/legacy/www/` | [`fonts.py`](fonts.py) |
+| `app/src/main/res/drawable/ic_mdi_*.xml` | Material Design Icons, the `@mdi/js` package (7.4.47) | [`icons.py`](icons.py) |
+
+```bash
+python3 design/fonts.py <Inter-Variable.woff2> <JetBrainsMono-Variable.woff2>   # fontTools + brotli
+
+npm pack @mdi/js && tar xzf mdi-js-*.tgz                                       # in a scratch folder
+python3 design/icons.py package/mdi.js
+```
+
+`fonts.py` turns each weight the app uses into a static TTF (Android reads
+neither WOFF2 nor, before API 31, a weight out of a variable font from XML) and
+keeps only Latin, punctuation and arrows. `icons.py` takes the icons listed at its
+top; an icon a layout starts using is added there first.
+
+The licences travel with them: Inter and JetBrains Mono are under the SIL Open
+Font License, kept in each font's own name table and in
+[`licenses/fonts-OFL.txt`](licenses/fonts-OFL.txt); the icons are Pictogrammers'
+Material Design Icons, Apache License 2.0
+([`licenses/mdi-LICENSE.txt`](licenses/mdi-LICENSE.txt)).

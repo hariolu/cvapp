@@ -2,64 +2,53 @@
 <!-- Downloading a self-update — a determinate bar plus a percentage, so a slow
      connection still shows movement instead of looking hung. Not cancelable by
      tapping outside or the back button (see MainActivity.beginUpdate); the
-     Cancel button here is the only way out. Hosted in dialogCard. -->
+     Cancel button here is the only way out. A Bubble pop-up in dialogCard. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:gravity="center_horizontal"
-    android:paddingStart="24dp"
-    android:paddingEnd="24dp"
-    android:paddingTop="24dp"
-    android:paddingBottom="16dp">
+    android:padding="20dp">
 
-    <ImageView
-        android:layout_width="40dp"
-        android:layout_height="40dp"
-        android:src="@drawable/logo"
-        android:contentDescription="@null" />
-
-    <TextView
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="14dp"
-        android:text="@string/update_downloading"
-        android:textColor="#FFFFFFFF"
-        android:textSize="17sp"
-        android:textStyle="bold"
-        android:gravity="center" />
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <ImageView style="@style/Bubble.Icon" android:src="@drawable/ic_mdi_download" />
+
+        <TextView
+            style="@style/Bubble.PopupTitle"
+            android:text="@string/update_downloading" />
+
+        <TextView
+            android:id="@+id/updateProgressLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:fontFamily="@font/inter_medium"
+            android:textSize="13sp"
+            android:tag="muted" />
+
+    </LinearLayout>
 
     <ProgressBar
         android:id="@+id/updateProgressBar"
         style="?android:attr/progressBarStyleHorizontal"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="20dp"
+        android:layout_marginTop="18dp"
         android:max="100"
-        android:indeterminate="true" />
+        android:indeterminate="true"
+        android:tag="bar" />
 
-    <TextView
-        android:id="@+id/updateProgressLabel"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="8dp"
-        android:textColor="#FFAAAAAA"
-        android:textSize="13sp"
-        android:gravity="end" />
+    <LinearLayout style="@style/Bubble.Actions">
 
-    <TextView
-        android:id="@+id/updateProgressCancel"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="end"
-        android:layout_marginTop="10dp"
-        android:text="@android:string/cancel"
-        android:textColor="#FF888888"
-        android:textSize="14sp"
-        android:textStyle="bold"
-        android:padding="12dp"
-        android:clickable="true"
-        android:focusable="true"
-        android:background="?attr/selectableItemBackground" />
+        <TextView
+            android:id="@+id/updateProgressCancel"
+            style="@style/Bubble.Button"
+            android:text="@android:string/cancel" />
+
+    </LinearLayout>
 
 </LinearLayout>

@@ -38,6 +38,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
 
+            <!-- Long-press the icon: CV Mail, Car Trips, App settings. -->
+            <meta-data
+                android:name="android.app.shortcuts"
+                android:resource="@xml/shortcuts" />
+
             <!-- App-private scheme — cvha://cv-panel#trips
                  Never needs domain verification, so it always works: HA actionable
                  notifications, home-screen shortcuts, QR codes, dashboard buttons. -->
