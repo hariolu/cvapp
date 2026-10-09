@@ -1,46 +1,57 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- A new build is out on GitHub Releases — see Updater/MainActivity.promptUpdate.
      Title and body are set from Kotlin (version name, size, release notes).
-     A Bubble pop-up in dialogCard; the buttons at the bottom right, the filled
-     one last, as on the CV Panel. -->
-<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+     A Bubble pop-up in dialogCard. The notes scroll and the buttons do not:
+     long notes would otherwise push Update below the bottom of the screen.
+     The buttons sit at the bottom right, the filled one last, as on the CV
+     Panel. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content">
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="20dp">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical"
-        android:padding="20dp">
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
 
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
+        <ImageView style="@style/Bubble.Icon" android:src="@drawable/ic_mdi_update" />
 
-            <ImageView style="@style/Bubble.Icon" android:src="@drawable/ic_mdi_update" />
-
-            <TextView android:id="@+id/updateTitle" style="@style/Bubble.PopupTitle" />
-
-        </LinearLayout>
-
-        <TextView android:id="@+id/updateBody" style="@style/Bubble.PopupBody" />
-
-        <LinearLayout style="@style/Bubble.Actions">
-
-            <TextView
-                android:id="@+id/updateLater"
-                style="@style/Bubble.Button"
-                android:text="@string/update_action_later" />
-
-            <TextView
-                android:id="@+id/updateInstall"
-                style="@style/Bubble.Button.Filled"
-                android:layout_marginStart="8dp"
-                android:text="@string/update_action_install" />
-
-        </LinearLayout>
+        <TextView android:id="@+id/updateTitle" style="@style/Bubble.PopupTitle" />
 
     </LinearLayout>
-</ScrollView>
+
+    <!-- 0dp and a weight: as tall as the notes, and no taller than the room the
+         card has left once the head and the buttons are in. -->
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="14dp"
+        android:scrollbarStyle="outsideOverlay">
+
+        <TextView
+            android:id="@+id/updateBody"
+            style="@style/Bubble.PopupBody"
+            android:layout_marginTop="0dp" />
+
+    </ScrollView>
+
+    <LinearLayout style="@style/Bubble.Actions">
+
+        <TextView
+            android:id="@+id/updateLater"
+            style="@style/Bubble.Button"
+            android:text="@string/update_action_later" />
+
+        <TextView
+            android:id="@+id/updateInstall"
+            style="@style/Bubble.Button.Filled"
+            android:layout_marginStart="8dp"
+            android:text="@string/update_action_install" />
+
+    </LinearLayout>
+
+</LinearLayout>
