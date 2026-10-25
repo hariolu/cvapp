@@ -281,6 +281,85 @@ class MainActivity : AppCompatActivity() {
 
         /** Home-screen mode, link handling and the update check, from the panel. */
         @JavascriptInterface fun openAppSettings() = mainHandler.post { showAppSettings() }
+
+        // ── CV Chat notifications (PushService) ──────────────────────────────
+        // The chat page registers this phone with its house: the app hands over
+        // the public half of its own key, the house answers with this phone's
+        // topic on the relay. Only the house's own pages may switch it.
+
+        /** This phone's public key for sealed notifications, made on first ask. */
+        @JavascriptInterface fun pushKey(): String {
+            val (_, pub) = secureStore.pushKeys()
+            return JSONObject()
+                .put("key", java.util.Base64.getEncoder().encodeToString(pub))
+                .put("device", secureStore.pushDevice ?: "")
+                .put("name", Build.MODEL)
+                .put("on", secureStore.pushReady())
+                .toString()
+        }
+
+        @JavascriptInterface fun pushSet(json: String) = mainHandler.post {
+            if (!isHaAppHost(webView.url.orEmpty())) return@post
+            val o = runCatching { JSONObject(json) }.getOrNull() ?: return@post
+            val relay = o.optString("relay").trimEnd('/')
+            val topic = o.optString("topic")
+            val device = o.optString("device")
+            if (!relay.startsWith("https://") || topic.isBlank() || device.isBlank()) return@post
+            secureStore.savePush(device, topic, relay)
+            // The page re-registers quietly on every open; only switching on asks.
+            if (o.optBoolean("ask", true)) askForPush()
+            PushService.start(this@MainActivity)
+        }
+
+        @JavascriptInterface fun pushOff() = mainHandler.post {
+            if (!isHaAppHost(webView.url.orEmpty())) return@post
+            PushService.stop(this@MainActivity)
+            secureStore.forgetPush()
+        }
+
+        /** A button pressed in a notification, for the chat page to press as the person. Once. */
+        @JavascriptInterface fun takeTap(): String {
+            val tap = pendingTap ?: ""
+            pendingTap = null
+            return tap
+        }
+    }
+
+    // A notification's button, waiting for the chat page to press it.
+    @Volatile private var pendingTap: String? = null
+    private lateinit var notifyPermission: ActivityResultLauncher<String>
+
+    private fun takeTapFrom(intent: Intent?): Boolean {
+        val tap = intent?.getStringExtra(Notifier.EXTRA_TAP) ?: return false
+        intent.removeExtra(Notifier.EXTRA_TAP)
+        pendingTap = tap
+        runCatching { JSONObject(tap).optString("tag") }.getOrNull()
+            ?.takeIf { it.isNotEmpty() }?.let { Notifier.cancel(this, it) }
+        return true
+    }
+
+    /**
+     * Notifications need a yes on Android 13 and later, and a stream that lasts
+     * the night needs the app out of battery optimisation: the price of push
+     * without Google, as for ntfy or Signal without Play services.
+     */
+    private fun askForPush() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            notifyPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
+        askBatteryExemption()
+    }
+
+    @SuppressLint("BatteryLife")
+    private fun askBatteryExemption() {
+        val power = getSystemService(android.os.PowerManager::class.java)
+        if (power.isIgnoringBatteryOptimizations(packageName)) return
+        runCatching {
+            startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
+        }
     }
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -310,6 +389,7 @@ class MainActivity : AppCompatActivity() {
             vpnPermissionContinuation = null
         }
         filePicker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { onFilesChosen(it) }
+        notifyPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { askBatteryExemption() }
 
         // First thing, before a second WebView gets built on top of the one that
         // is already out there. This is the instance Android keeps.
@@ -406,6 +486,9 @@ class MainActivity : AppCompatActivity() {
 
         val launchedForSettings = isAppSettingsLink(intent?.data)
         if (!launchedForSettings) pendingDeepLinkPath = deepLinkPathOrWarn(intent?.data)
+        takeTapFrom(intent)
+        // Listening again if Android stopped it, as when the app was swiped away.
+        PushService.start(this)
         resolveInitialTarget()
 
         // These wait out the loading animation rather than landing on top of it,
@@ -429,6 +512,11 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         if (isAppSettingsLink(intent.data)) { showAppSettings(); return }
+        // A page already open may never have left the screen (the shade only
+        // covered it), so it is told outright that a tap is waiting.
+        if (takeTapFrom(intent) && ::webView.isInitialized) {
+            webView.evaluateJavascript("window.dispatchEvent(new Event('cvapp-tap'))", null)
+        }
         deepLinkPathOrWarn(intent.data)?.let { applyDeepLink(it) }
     }
 
@@ -559,6 +647,8 @@ class MainActivity : AppCompatActivity() {
     // ── WebView ───────────────────────────────────────────────────────────────
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
+        // Debug builds only: lets a desktop's DevTools look into the page, for testing.
+        if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true)
         // Transparent background: when Chromium creates a new compositing layer for
         // a popup animation, the unpainted layer shows the parent's dark #111111
         // surface instead of pure black — eliminates the single-frame black flash.

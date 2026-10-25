@@ -107,4 +107,15 @@
     <string name="otp_hint">000000</string>
     <string name="otp_submit">Connect</string>
     <string name="otp_cancel">Cancel</string>
+
+    <!-- CV Chat notifications (Notifier.kt): one channel per kind of message, chosen by the house -->
+    <string name="channel_security">Security and door</string>
+    <string name="channel_mail">Mail and packages</string>
+    <string name="channel_household">Household</string>
+    <string name="channel_replies">Replies to what you asked</string>
+    <string name="channel_alarms">Alarms and calendar</string>
+    <string name="channel_system">System</string>
+    <string name="channel_fun">Fun and vibe</string>
+    <string name="channel_connection">Connection</string>
+    <string name="push_listening">CV Chat is listening</string>
 </resources>

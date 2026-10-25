@@ -153,6 +153,59 @@ class SecureStore(context: Context) {
 
     fun hasPeer(): Boolean = wgPrivateKey != null && refreshToken != null && serverPubkey != null
 
+    // ── CV Chat push ──────────────────────────────────────────────────────────
+    // This phone's own X25519 key for sealed notifications (PushCrypto). Like the
+    // WireGuard key it never leaves the phone: the house only gets the public
+    // half, through the chat page, and the relay only ever sees ciphertext.
+    var pushPrivateKey: String?
+        get() = get("push_private_key")
+        set(v) = put("push_private_key", v)
+
+    var pushPublicKey: String?
+        get() = prefs.getString("push_public_key", null)
+        set(v) { prefs.edit().putString("push_public_key", v).commit() }
+
+    /** The house's name for this phone, and where its notifications wait. */
+    val pushDevice: String? get() = prefs.getString("push_device", null)
+    val pushTopic: String? get() = prefs.getString("push_topic", null)
+    val pushRelay: String? get() = prefs.getString("push_relay", null)
+
+    /** The relay's id of the last notification taken, so a reconnect asks only for what came after. */
+    var pushSince: String?
+        get() = prefs.getString("push_since", null)
+        set(v) = prefs.edit().putString("push_since", v).apply()
+
+    fun pushReady(): Boolean = pushPrivateKey != null && pushPublicKey != null && pushTopic != null && pushRelay != null
+
+    /** The key pair, made the first time anyone asks. */
+    fun pushKeys(): Pair<ByteArray, ByteArray> {
+        val priv = pushPrivateKey
+        val pub = pushPublicKey
+        if (priv != null && pub != null) {
+            return java.util.Base64.getDecoder().decode(priv) to java.util.Base64.getDecoder().decode(pub)
+        }
+        val (newPriv, newPub) = PushCrypto.newKeyPair()
+        pushPrivateKey = java.util.Base64.getEncoder().encodeToString(newPriv)
+        pushPublicKey = java.util.Base64.getEncoder().encodeToString(newPub)
+        return newPriv to newPub
+    }
+
+    fun savePush(device: String, topic: String, relay: String) {
+        prefs.edit()
+            .putString("push_device", device)
+            .putString("push_topic", topic)
+            .putString("push_relay", relay)
+            .commit()
+    }
+
+    /** Notifications off on this phone. The key goes too: on again is a new phone to the house. */
+    fun forgetPush() {
+        prefs.edit()
+            .remove("push_private_key").remove("push_public_key")
+            .remove("push_device").remove("push_topic").remove("push_relay").remove("push_since")
+            .commit()
+    }
+
     /**
      * Everything that lets this phone in from outside: the WireGuard key and
      * the session. cv-auth is not told — it has no way to be — but its peer

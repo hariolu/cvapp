@@ -23,6 +23,15 @@ def localHost      = 'ha.local'
 def localPort      = '8123'
 def linkScheme     = 'cvha'
 
+// A test build for another house on the LAN (the demo house), named on the
+// command line so no address lands in this public repository:
+//   ./gradlew assembleDebug -PcvLocalHost=<ip> -PcvLocalPort=80 -PcvSuffix=.demo -PcvScheme=cvhademo
+// The suffix and scheme let it sit beside the real CVapp on one phone.
+localHost  = project.findProperty('cvLocalHost') ?: localHost
+localPort  = project.findProperty('cvLocalPort') ?: localPort
+linkScheme = project.findProperty('cvScheme') ?: linkScheme
+def idSuffix = project.findProperty('cvSuffix') ?: ''
+
 // The Telegram bot that issues OTP codes for /vpn/bootstrap — same one
 // login.coyotes.vision's own static page links to. One cv-auth deployment
 // means one bot, same as it means one loginHost.
@@ -60,6 +69,7 @@ android {
 
     defaultConfig {
         applicationId "com.cvapp"
+        applicationIdSuffix idSuffix
         minSdk 26
         targetSdk 35
         versionCode 18
