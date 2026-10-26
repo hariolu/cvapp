@@ -148,6 +148,14 @@ class MainActivity : AppCompatActivity() {
 
         private const val TAG = "CVapp"
 
+        /** Closes Home Assistant's slid-in side menu; true when there was one to close. */
+        private const val CLOSE_DRAWER_JS = """(function(){try{
+            var m=document.querySelector('home-assistant');
+            m=m&&m.shadowRoot&&m.shadowRoot.querySelector('home-assistant-main');
+            var d=m&&m.shadowRoot&&m.shadowRoot.querySelector('ha-drawer');
+            if(d&&d.open&&d.type==='modal'){d.open=false;return true;}
+        }catch(e){}return false;})()"""
+
         private const val RECHECK_INTERVAL_MS   = 20_000L
         private const val SILENT_RETRY_ATTEMPTS = 2       // blips retried quietly before we surface a retry hint
         private const val SILENT_RETRY_DELAY_MS = 1_200L
@@ -2375,13 +2383,19 @@ class MainActivity : AppCompatActivity() {
         // dismiss if the card allows it, otherwise swallow the press entirely
         // (matches setCancelable(false) on the dialogs that used to set it).
         activeDialog?.let { if (it.cancelable) dismissDialog(); return }
-        when {
-            webView.canGoBack() -> webView.goBack()
-            // As the home screen there is nothing behind us. Finishing would just
-            // make Android relaunch the home app — this one — from cold, so Back
-            // at the root is swallowed here exactly as a launcher swallows it.
-            LauncherMode.isCurrentHome(this) -> Unit
-            else -> super.onBackPressed()
+        // Home Assistant's side menu, slid over the page on a phone, keeps no
+        // history of its own: Back would leave the page under it instead of
+        // closing it, as Android's own drawers do. The page is asked first.
+        webView.evaluateJavascript(CLOSE_DRAWER_JS) { closed ->
+            if (closed == "true") return@evaluateJavascript
+            when {
+                webView.canGoBack() -> webView.goBack()
+                // As the home screen there is nothing behind us. Finishing would just
+                // make Android relaunch the home app — this one — from cold, so Back
+                // at the root is swallowed here exactly as a launcher swallows it.
+                LauncherMode.isCurrentHome(this) -> Unit
+                else -> super.onBackPressed()
+            }
         }
     }
 }
