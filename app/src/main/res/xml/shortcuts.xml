@@ -7,6 +7,17 @@
 <shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
 
     <shortcut
+        android:shortcutId="chat"
+        android:icon="@drawable/ic_shortcut_chat"
+        android:shortcutShortLabel="@string/shortcut_chat">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.cvapp"
+            android:targetClass="com.cvapp.MainActivity"
+            android:data="cvha://cv-panel/chat" />
+    </shortcut>
+
+    <shortcut
         android:shortcutId="cvmail"
         android:icon="@drawable/ic_shortcut_mail"
         android:shortcutShortLabel="@string/shortcut_mail">

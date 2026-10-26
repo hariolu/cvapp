@@ -69,6 +69,7 @@
     <string name="settings_remote_forgotten">This phone no longer has remote access</string>
 
     <!-- Launcher shortcuts: long-press the app's icon -->
+    <string name="shortcut_chat">Chat</string>
     <string name="shortcut_mail">CV Mail</string>
     <string name="shortcut_trips">Car Trips</string>
 
