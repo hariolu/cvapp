@@ -36,6 +36,7 @@ object Notifier {
         Triple("security", R.string.channel_security, NotificationManager.IMPORTANCE_HIGH),
         Triple("mail", R.string.channel_mail, NotificationManager.IMPORTANCE_DEFAULT),
         Triple("household", R.string.channel_household, NotificationManager.IMPORTANCE_DEFAULT),
+        Triple("messages", R.string.channel_messages, NotificationManager.IMPORTANCE_DEFAULT),
         Triple("replies", R.string.channel_replies, NotificationManager.IMPORTANCE_LOW),
         Triple("alarms", R.string.channel_alarms, NotificationManager.IMPORTANCE_DEFAULT),
         Triple("system", R.string.channel_system, NotificationManager.IMPORTANCE_LOW),
@@ -80,7 +81,10 @@ object Notifier {
         if (edit && nm.activeNotifications.none { it.tag == tag }) return
         val body = p.optString("b")
         val first = body.substringBefore('\n')
-        val builder = NotificationCompat.Builder(ctx, p.optString("ch").ifEmpty { "household" })
+        // A channel this build does not know (a newer house) would drop the
+        // notification on the floor: Android posts nothing to a missing channel.
+        val channel = p.optString("ch").takeIf { ch -> CHANNELS.any { it.first == ch } } ?: "household"
+        val builder = NotificationCompat.Builder(ctx, channel)
             .setSmallIcon(R.drawable.ic_mdi_message_text_outline)
             .setContentTitle(p.optString("ti"))
             .setContentText(first)
