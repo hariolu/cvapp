@@ -317,6 +317,11 @@ class MainActivity : AppCompatActivity() {
             secureStore.forgetPush()
         }
 
+        /** The thread the chat page shows right now, or "" when it shows none. */
+        @JavascriptInterface fun chatShown(thread: String) {
+            Notifier.onScreen = thread.take(32)
+        }
+
         /** A button pressed in a notification, for the chat page to press as the person. Once. */
         @JavascriptInterface fun takeTap(): String {
             val tap = pendingTap ?: ""
@@ -539,6 +544,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
+        Notifier.appVisible = true
         networkMonitor.start()
         mainHandler.postDelayed(recheckRunnable, RECHECK_INTERVAL_MS)
         checkForUpdate(force = false)
@@ -561,6 +567,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
+        Notifier.appVisible = false
         networkMonitor.stop()
         mainHandler.removeCallbacks(recheckRunnable)
         runCatching { unregisterReceiver(powerReceiver) }

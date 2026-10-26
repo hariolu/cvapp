@@ -25,6 +25,13 @@ object Notifier {
     private const val MESSAGE_ID = 7
     const val EXTRA_TAP = "cv_tap"
 
+    // What the person is looking at: the chat page reports its thread through
+    // the bridge (empty when it shows none), the activity whether it is on
+    // screen at all. A message for that very thread is already in front of
+    // them, so it does not ring as well.
+    @Volatile var onScreen: String = ""
+    @Volatile var appVisible: Boolean = false
+
     private val CHANNELS = listOf(
         Triple("security", R.string.channel_security, NotificationManager.IMPORTANCE_HIGH),
         Triple("mail", R.string.channel_mail, NotificationManager.IMPORTANCE_DEFAULT),
@@ -64,6 +71,7 @@ object Notifier {
     private fun post(ctx: Context, p: JSONObject) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
         val thread = p.optString("t")
+        if (appVisible && thread.isNotEmpty() && thread == onScreen) return
         val fold = p.optString("f")
         // A message whose header names a panel replaces that panel's last
         // notification; anything else stands on its own.
