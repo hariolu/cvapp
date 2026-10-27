@@ -126,7 +126,7 @@ object Notifier {
         ctx.getSystemService(NotificationManager::class.java).cancel(tag, MESSAGE_ID)
 
     private fun chatIntent(ctx: Context, thread: String): Intent =
-        Intent(Intent.ACTION_VIEW, Uri.parse("${BuildConfig.LINK_SCHEME}://cv-panel/chat" +
+        Intent(Intent.ACTION_VIEW, Uri.parse("${BuildConfig.LINK_SCHEME}://cv-chat/chat" +
             if (thread.isNotEmpty()) "#$thread" else ""), ctx, MainActivity::class.java)
 
     private fun openChat(ctx: Context, thread: String, code: Int): PendingIntent =

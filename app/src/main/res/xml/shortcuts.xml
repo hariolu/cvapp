@@ -14,7 +14,7 @@
             android:action="android.intent.action.VIEW"
             android:targetPackage="com.cvapp"
             android:targetClass="com.cvapp.MainActivity"
-            android:data="cvha://cv-panel/chat" />
+            android:data="cvha://cv-chat/chat" />
     </shortcut>
 
     <shortcut

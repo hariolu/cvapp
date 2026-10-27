@@ -336,6 +336,28 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface fun download(url: String, name: String, mime: String) =
             mainHandler.post { saveFile(url, name, mime) }
 
+        // ── CV Chat voice notes (VoiceRecorder) ──────────────────────────────
+        // Only the house's own pages may switch the microphone on. The first
+        // time, Android asks the person: the answer reaches the page as a
+        // 'cvapp-mic' event ("granted", "denied"); so does "stopped", when the
+        // app leaves the screen in the middle of a recording.
+
+        /** "" once it records, "asking" while Android asks, else why not. */
+        @JavascriptInterface fun micStart(): String {
+            if (!onHaPage) return "denied"
+            if (ContextCompat.checkSelfPermission(this@MainActivity, android.Manifest.permission.RECORD_AUDIO) !=
+                android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                mainHandler.post { micPermission.launch(android.Manifest.permission.RECORD_AUDIO) }
+                return "asking"
+            }
+            return voice.start()
+        }
+
+        @JavascriptInterface fun micLevel(): Int = voice.level()
+
+        /** The recording as {b64, mime}, or "" when `send` is false or nothing was recorded. */
+        @JavascriptInterface fun micStop(send: Boolean): String = voice.stop(send)
+
         /** A button pressed in a notification, for the chat page to press as the person. Once. */
         @JavascriptInterface fun takeTap(): String {
             val tap = pendingTap ?: ""
@@ -347,6 +369,16 @@ class MainActivity : AppCompatActivity() {
     // A notification's button, waiting for the chat page to press it.
     @Volatile private var pendingTap: String? = null
     private lateinit var notifyPermission: ActivityResultLauncher<String>
+    private lateinit var micPermission: ActivityResultLauncher<String>
+    private val voice by lazy { VoiceRecorder(applicationContext) }
+    // Whether the page on screen is the house's own (the bridge's calls arrive
+    // off the main thread, where the WebView cannot be asked).
+    @Volatile private var onHaPage = false
+
+    private fun micNews(what: String) {
+        if (::webView.isInitialized)
+            webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('cvapp-mic',{detail:'$what'}))", null)
+    }
 
     private fun takeTapFrom(intent: Intent?): Boolean {
         val tap = intent?.getStringExtra(Notifier.EXTRA_TAP) ?: return false
@@ -409,6 +441,9 @@ class MainActivity : AppCompatActivity() {
         }
         filePicker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { onFilesChosen(it) }
         notifyPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { askBatteryExemption() }
+        micPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { ok ->
+            micNews(if (ok) "granted" else "denied")
+        }
 
         // First thing, before a second WebView gets built on top of the one that
         // is already out there. This is the instance Android keeps.
@@ -582,6 +617,8 @@ class MainActivity : AppCompatActivity() {
     override fun onStop() {
         super.onStop()
         Notifier.appVisible = false
+        // A voice note is recorded on screen only: off it, the recording is dropped.
+        if (voice.recording) { voice.stop(false); micNews("stopped") }
         networkMonitor.stop()
         mainHandler.removeCallbacks(recheckRunnable)
         runCatching { unregisterReceiver(powerReceiver) }
@@ -744,6 +781,7 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageStarted(view: WebView, url: String, fav: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, fav)
+                onHaPage = isHaAppHost(url)
                 step(R.drawable.ic_mdi_web, "Loading…")
             }
 
@@ -787,6 +825,7 @@ class MainActivity : AppCompatActivity() {
             // location.hash) — this is how we track where in HA the user actually is.
             override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
                 super.doUpdateVisitedHistory(view, url, isReload)
+                onHaPage = isHaAppHost(url)
                 if (!isHaAppHost(url)) return   // ignore the login.coyotes.vision OTP portal
 
                 val deepLink = pendingDeepLinkPath
