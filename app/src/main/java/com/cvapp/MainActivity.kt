@@ -4,6 +4,7 @@ import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
 import android.annotation.SuppressLint
 import android.app.ActivityManager
+import android.app.DownloadManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -18,6 +19,7 @@ import android.net.http.SslError
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.Message
@@ -329,6 +331,10 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface fun chatShown(thread: String) {
             Notifier.onScreen = thread.take(32)
         }
+
+        /** A file from the house into Downloads, under the name the house gave it. */
+        @JavascriptInterface fun download(url: String, name: String, mime: String) =
+            mainHandler.post { saveFile(url, name, mime) }
 
         /** A button pressed in a notification, for the chat page to press as the person. Once. */
         @JavascriptInterface fun takeTap(): String {
@@ -688,6 +694,11 @@ class MainActivity : AppCompatActivity() {
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(r: PermissionRequest) = r.grant(r.resources)
 
+            // A page's element full screen (the chat's viewer, a clip's own
+            // button): WebView refuses the request unless the app puts it up.
+            override fun onShowCustomView(view: View, callback: CustomViewCallback) = showFull(view, callback)
+            override fun onHideCustomView() = hideFull(fromPage = true)
+
             // <input type="file">: answered by Android's own picker, see chooseFiles().
             override fun onShowFileChooser(
                 view: WebView, callback: ValueCallback<Array<Uri>>, params: FileChooserParams,
@@ -820,7 +831,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        webView.setDownloadListener { url, _, _, _, _ -> runCatching { openExternal(url) } }
+        // The house's own files go to Downloads; anything else to the browser.
+        webView.setDownloadListener { url, _, disposition, mime, _ ->
+            if (isHaAppHost(url)) saveFile(url, URLUtil.guessFileName(url, disposition, mime), mime.orEmpty())
+            else runCatching { openExternal(url) }
+        }
     }
 
     // ── Deep links ────────────────────────────────────────────────────────────
@@ -2376,6 +2391,57 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ── Files and full screen for the chat ────────────────────────────────────
+
+    /**
+     * A file from the house into Downloads, through Android's own downloader:
+     * a clip of a few hundred megabytes gets the system's progress and its
+     * "done" notification. Only the house's own addresses; the link is signed
+     * by the house, so it needs no session.
+     */
+    private fun saveFile(url: String, name: String, mime: String) {
+        val scheme = Uri.parse(url).scheme.orEmpty()
+        if (!isHaAppHost(url) || (scheme != "https" && scheme != "http")) return
+        // Before Android 10 a public folder needs a storage permission the app does not ask for.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) { openExternal(url); return }
+        val file = name.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_").trim()
+            .ifBlank { URLUtil.guessFileName(url, null, mime) }
+        val req = DownloadManager.Request(Uri.parse(url)).apply {
+            setTitle(file)
+            if (mime.isNotBlank()) setMimeType(mime)
+            setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, file)
+        }
+        runCatching { (getSystemService(DOWNLOAD_SERVICE) as DownloadManager).enqueue(req) }
+            .onFailure { Toast.makeText(this, R.string.download_failed, Toast.LENGTH_LONG).show() }
+    }
+
+    private var fullView: View? = null
+    private var fullDone: WebChromeClient.CustomViewCallback? = null
+
+    private fun showFull(view: View, done: WebChromeClient.CustomViewCallback) {
+        if (fullView != null) { done.onCustomViewHidden(); return }
+        fullView = view
+        fullDone = done
+        (window.decorView as ViewGroup).addView(view, FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            hide(WindowInsetsCompat.Type.systemBars())
+        }
+    }
+
+    /** Out of full screen: the page left it, or Back did (then the page is told). */
+    private fun hideFull(fromPage: Boolean = false) {
+        val view = fullView ?: return
+        fullView = null
+        (window.decorView as ViewGroup).removeView(view)
+        applyBars()
+        val done = fullDone
+        fullDone = null
+        if (!fromPage) done?.onCustomViewHidden()
+    }
+
     @Deprecated("Deprecated in API 33")
     override fun onBackPressed() {
         // A system AlertDialog used to swallow Back on its own; a plain view
@@ -2383,6 +2449,8 @@ class MainActivity : AppCompatActivity() {
         // dismiss if the card allows it, otherwise swallow the press entirely
         // (matches setCancelable(false) on the dialogs that used to set it).
         activeDialog?.let { if (it.cancelable) dismissDialog(); return }
+        // Full screen first, as a video player leaves it.
+        if (fullView != null) { hideFull(); return }
         // Home Assistant's side menu, slid over the page on a phone, keeps no
         // history of its own: Back would leave the page under it instead of
         // closing it, as Android's own drawers do. The page is asked first.

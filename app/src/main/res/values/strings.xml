@@ -114,6 +114,7 @@
     <string name="channel_mail">Mail and packages</string>
     <string name="channel_household">Household</string>
     <string name="channel_messages">Messages from CV</string>
+    <string name="download_failed">Could not save the file to Downloads.</string>
     <string name="channel_replies">Replies to what you asked</string>
     <string name="channel_alarms">Alarms and calendar</string>
     <string name="channel_system">System</string>
