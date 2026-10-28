@@ -12,7 +12,7 @@
 
     <!-- Loading screen -->
     <string name="loading_title">Coyotes Vision</string>
-    <string name="loading_retry">Retry now</string>
+    <string name="loading_retry">Try again now</string>
     <string name="route_local">Local</string>
     <string name="route_remote">Remote</string>
     <!-- Greeting: the time of day, and the name Home Assistant knows this phone by -->

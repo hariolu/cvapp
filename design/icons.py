@@ -20,8 +20,8 @@ ICONS = [
     "cog", "cog-outline", "compass-outline", "dialpad", "dock-bottom", "dock-top", "download",
     "email-outline", "github", "home-assistant", "home-outline", "information-outline",
     "key-variant", "lan-disconnect", "link-variant", "lock-open-variant-outline", "lock-outline", "message-text-outline",
-    "palette-outline", "power-plug-outline", "refresh", "send", "shield-key-outline",
-    "shield-lock-open-outline", "swap-horizontal", "timer-sand-complete", "update", "vpn", "web",
+    "minus-circle-outline", "palette-outline", "power-plug-outline", "refresh", "send", "shield-key-outline",
+    "shield-lock-open-outline", "swap-horizontal", "timer-sand-complete", "update", "vpn", "web", "wifi",
 ]
 TOKEN = re.compile(r"[A-Za-z]|-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
 

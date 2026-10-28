@@ -33,6 +33,23 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
 
+        <!-- Instead of the sky once a page has been up: that page as it was,
+             softened and dimmed, so finding the way back does not jump to
+             another screen and back. See MainActivity.freezePage(). -->
+        <ImageView
+            android:id="@+id/loadingPage"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="fitXY"
+            android:contentDescription="@null"
+            android:visibility="gone" />
+
+        <View
+            android:id="@+id/loadingDim"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:visibility="gone" />
+
         <!-- The app's settings. Long-pressing this screen opens them as well, but a
              screen that is up for a couple of seconds needs a door you can see. -->
         <ImageView
@@ -169,13 +186,41 @@
 
             </LinearLayout>
 
-            <TextView
-                android:id="@+id/loadingRetryHint"
-                style="@style/Bubble.Sub"
-                android:layout_marginTop="14dp"
-                android:drawableStart="@drawable/ic_mdi_refresh"
-                android:text="@string/loading_retry"
-                android:alpha="0" />
+            <!-- A try that failed: what each way in found, when the next try
+                 goes, and a button for now. The screen holds still until then:
+                 no switching back and forth while it waits. -->
+            <LinearLayout
+                android:id="@+id/troubleBox"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:orientation="vertical"
+                android:gravity="center_horizontal"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:id="@+id/troubleChecks"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+
+                <TextView
+                    android:id="@+id/troubleNext"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:fontFamily="@font/inter_medium"
+                    android:textSize="12sp"
+                    android:tag="muted" />
+
+                <TextView
+                    android:id="@+id/troubleRetry"
+                    style="@style/Bubble.Button.Filled"
+                    android:layout_marginTop="10dp"
+                    android:drawableStart="@drawable/ic_mdi_refresh"
+                    android:text="@string/loading_retry" />
+
+            </LinearLayout>
 
         </LinearLayout>
 

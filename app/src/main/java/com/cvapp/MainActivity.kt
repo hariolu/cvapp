@@ -11,6 +11,8 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.verify.domain.DomainVerificationManager
 import android.content.pm.verify.domain.DomainVerificationUserState
+import android.graphics.Bitmap
+import android.graphics.Rect
 import android.graphics.RenderEffect
 import android.graphics.Shader
 import android.graphics.drawable.ColorDrawable
@@ -26,6 +28,7 @@ import android.os.Message
 import android.provider.Settings
 import android.util.Log
 import android.view.Gravity
+import android.view.PixelCopy
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -74,6 +77,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var rootLayout: FrameLayout
     private lateinit var loadingView: View
     private lateinit var loadingSky: BackdropView
+    private lateinit var loadingPage: ImageView
+    private lateinit var loadingDim: View
     private lateinit var loadingSettings: ImageView
     private lateinit var loadingLogo: ImageView
     private lateinit var loadingTitle: TextView
@@ -86,9 +91,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusIcon: ImageView
     private lateinit var statusName: TextView
     private lateinit var statusEndpoint: TextView
+    private lateinit var statusSpinner: ProgressBar
     private lateinit var loadingBrand: TextView
     private lateinit var loadingVersion: TextView
-    private lateinit var loadingRetryHint: TextView
+    private lateinit var troubleBox: LinearLayout
+    private lateinit var troubleChecks: LinearLayout
+    private lateinit var troubleNext: TextView
+    private lateinit var troubleRetry: TextView
 
     private val prefs by lazy { getSharedPreferences("cvapp_prefs", Context.MODE_PRIVATE) }
     private var breathingAnimator: ObjectAnimator? = null
@@ -97,13 +106,13 @@ class MainActivity : AppCompatActivity() {
     private val activityScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private lateinit var networkMonitor: NetworkMonitor
     private val mainHandler = Handler(Looper.getMainLooper())
-    private var resolveJob: Job? = null
 
-    // Tracks connectRemote() specifically — it can sit for minutes waiting on the
-    // OTP dialog, which outlives the resolveJob that launched it. Without this,
-    // a network blip mid-wait could start loading LOCAL_URL while connectRemote()
-    // (and its dialog) is still running in the background.
-    private var connectJob: Job? = null
+    // One try at the house at a time, from the first probe to the page being
+    // asked for — the sign-in code's wait included, which can take minutes. A
+    // network blip mid-wait finds it running and leaves it alone. See attempt().
+    private var attemptJob: Job? = null
+    // A look for a better way in while a page is up. See recheck().
+    private var recheckJob: Job? = null
 
     // ── VPN / Remote access ───────────────────────────────────────────────────
     // REMOTE no longer means login.coyotes.vision — it means this tunnel is up
@@ -133,7 +142,22 @@ class MainActivity : AppCompatActivity() {
     private var vpnDownOnStop = false
 
     private var consecutiveFailures = 0
-    private var retryBackoffMs = INITIAL_BACKOFF_MS
+
+    // What the try under way has found so far, for the screen if it fails.
+    private var findings: Findings? = null
+    // A failed try is on screen; the next goes at retryAt (0: when the person
+    // says so). See showTrouble().
+    private var troubleUp = false
+    private var retryAt = 0L
+    // The page being loaded failed: its onPageFinished is no arrival.
+    private var pageFailed = false
+    // A Home Assistant page has been on screen: from then on the way back is
+    // found over that page, not the sky. See freezePage().
+    private var pageShown = false
+    private var frozen: Bitmap? = null
+    private var freezing = false
+    /** The loading screen stands on that page now, not on the sky. */
+    private val veiled get() = loadingPage.visibility == View.VISIBLE
 
     // True right after a fresh navigation to a target's root — the next
     // real HA app URL we see gets checked against the last remembered path.
@@ -146,7 +170,6 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val ERROR_SSL      = -999
         private const val ERROR_RENDERER = -998
-        private const val ERROR_VPN      = -997
 
         private const val TAG = "CVapp"
 
@@ -159,10 +182,19 @@ class MainActivity : AppCompatActivity() {
         }catch(e){}return false;})()"""
 
         private const val RECHECK_INTERVAL_MS   = 20_000L
-        private const val SILENT_RETRY_ATTEMPTS = 2       // blips retried quietly before we surface a retry hint
-        private const val SILENT_RETRY_DELAY_MS = 1_200L
-        private const val INITIAL_BACKOFF_MS    = 3_000L
-        private const val MAX_BACKOFF_MS        = 15_000L
+        private const val SILENT_RETRY_DELAY_MS = 1_500L  // a page that failed once, tried again quietly
+        /** A failed try waits this long before the next goes by itself. */
+        private const val RETRY_AFTER_MS        = 30_000L
+        /** Networks come and go in bursts: the app looks again once they have settled. */
+        private const val NETWORK_SETTLE_MS     = 1_500L
+        /** Home's own network, asked twice before home counts as not there. */
+        private const val LOCAL_PROBE_TIMEOUT_MS = 1_000
+        private const val LOCAL_PROBE_GAP_MS     = 400L
+        /** A page that has neither arrived nor failed by now has failed. */
+        private const val PAGE_TIMEOUT_MS       = 45_000L
+        /** The page under the loading screen: this much smaller, then this soft. */
+        private const val FROZEN_SCALE          = 8
+        private const val FROZEN_BLUR_DP        = 14f
 
         // ── Keeping the remote session ───────────────────────────────────────
         // cv-auth expires a session a month after it last heard from it, and it
@@ -265,12 +297,17 @@ class MainActivity : AppCompatActivity() {
 
     private val recheckRunnable = object : Runnable {
         override fun run() {
-            checkAvailabilityAndActOn()
+            recheck()
             mainHandler.postDelayed(this, RECHECK_INTERVAL_MS)
         }
     }
 
-    private val errorRetryRunnable = Runnable { checkAvailabilityAndActOn(forceReload = true) }
+    private val retryRunnable = Runnable { attempt() }
+    private val networkSettled = Runnable { onNetworkSettled() }
+    private val countdown = Runnable { tick() }
+    private val pageTimeout = Runnable {
+        if (loadingVisible && !troubleUp && attemptJob?.isActive != true) pageError(WebViewClient.ERROR_TIMEOUT)
+    }
 
     // ── CV Panel bridge ───────────────────────────────────────────────────────
     // Exposed as window.CVAppBridge to all frames/iframes, on every origin this
@@ -478,6 +515,8 @@ class MainActivity : AppCompatActivity() {
         webView            = findViewById(R.id.webView)
         loadingView        = findViewById(R.id.loadingView)
         loadingSky         = findViewById(R.id.loadingSky)
+        loadingPage        = findViewById(R.id.loadingPage)
+        loadingDim         = findViewById(R.id.loadingDim)
         loadingSettings    = findViewById(R.id.loadingSettings)
         loadingLogo        = findViewById(R.id.loadingLogo)
         loadingTitle       = findViewById(R.id.loadingTitle)
@@ -490,9 +529,13 @@ class MainActivity : AppCompatActivity() {
         statusIcon         = findViewById(R.id.statusIcon)
         statusName         = findViewById(R.id.statusName)
         statusEndpoint     = findViewById(R.id.statusEndpoint)
+        statusSpinner      = findViewById(R.id.statusSpinner)
         loadingBrand       = findViewById(R.id.loadingBrand)
         loadingVersion     = findViewById(R.id.loadingVersion)
-        loadingRetryHint   = findViewById(R.id.loadingRetryHint)
+        troubleBox         = findViewById(R.id.troubleBox)
+        troubleChecks      = findViewById(R.id.troubleChecks)
+        troubleNext        = findViewById(R.id.troubleNext)
+        troubleRetry       = findViewById(R.id.troubleRetry)
         dialogScrim        = findViewById(R.id.dialogScrim)
         dialogCard         = findViewById(R.id.dialogCard)
         (dialogCard.layoutParams as FrameLayout.LayoutParams).let {
@@ -529,12 +572,9 @@ class MainActivity : AppCompatActivity() {
         networkMonitor = NetworkMonitor(this) { onNetworkSignal() }
 
         setupWebView()
-        loadingRetryHint.setOnClickListener {
+        troubleRetry.setOnClickListener {
             consecutiveFailures = 0
-            retryBackoffMs = INITIAL_BACKOFF_MS
-            mainHandler.removeCallbacks(errorRetryRunnable)
-            hideRetryHint()
-            checkAvailabilityAndActOn(forceReload = true)
+            attempt()
         }
         animateLoadingIn()
 
@@ -543,7 +583,7 @@ class MainActivity : AppCompatActivity() {
         takeTapFrom(intent)
         // Listening again if Android stopped it, as when the app was swiped away.
         PushService.start(this)
-        resolveInitialTarget()
+        attempt()
 
         // These wait out the loading animation rather than landing on top of it,
         // and only one of them can be what this launch is about. An update we
@@ -582,6 +622,17 @@ class MainActivity : AppCompatActivity() {
         refreshSettings?.invoke()
         resumeUpdateAfterPermission()
         applyBars()
+        // The page taken on the way out has done its job by now (onStart put
+        // it under the loading screen if one was needed): a later try takes
+        // the page as it is then.
+        frozen = null
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // The page as the person leaves it, for the way back in: the tunnel goes
+        // down in onStop, and coming back finds it again over this page.
+        if (pageShown && !loadingVisible && !isDialogShowing()) freezePage {}
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
@@ -605,12 +656,13 @@ class MainActivity : AppCompatActivity() {
         // appear after the home instance exists, and coming to the front is the
         // natural moment to be sure this is the only one.
         removeOtherAppTasks()
-        if (vpnDownOnStop) {
-            vpnDownOnStop = false
-            // Target hasn't changed (still REMOTE) so the normal resolve path
-            // would see nothing to do and leave the dead tunnel sitting there
-            // until the next periodic recheck — force it instead.
-            checkAvailabilityAndActOn(forceReload = true)
+        when {
+            // The tunnel went down with the app: find the way back at once, over
+            // the page taken in onPause.
+            vpnDownOnStop -> { vpnDownOnStop = false; attempt(snap = false) }
+            // A failed try's clock stood still in the background: it goes on
+            // from where it was, or tries at once if its time has passed.
+            troubleUp -> tick()
         }
     }
 
@@ -621,6 +673,8 @@ class MainActivity : AppCompatActivity() {
         if (voice.recording) { voice.stop(false); micNews("stopped") }
         networkMonitor.stop()
         mainHandler.removeCallbacks(recheckRunnable)
+        mainHandler.removeCallbacks(networkSettled)
+        mainHandler.removeCallbacks(countdown)
         runCatching { unregisterReceiver(powerReceiver) }
         // Whatever the person changed in the panel meanwhile, their colour above
         // all, is what the next loading screen should wear.
@@ -632,7 +686,7 @@ class MainActivity : AppCompatActivity() {
         // The VPN key stays in the status bar for as long as the tunnel is up,
         // regardless of whether this app is on screen — that's Android's own
         // system indicator, not ours to hide. Tearing the tunnel down here (as
-        // opposed to only on a LOCAL⇄REMOTE switch, see switchTo()) makes it
+        // opposed to only on a REMOTE→LOCAL move, see attempt()) makes it
         // disappear when the app actually closes, at the cost of a short
         // reconnect on the way back in — cheap, since the WG key and refresh
         // token are already on disk and neither VPN consent nor a fresh OTP is
@@ -782,14 +836,16 @@ class MainActivity : AppCompatActivity() {
             override fun onPageStarted(view: WebView, url: String, fav: android.graphics.Bitmap?) {
                 super.onPageStarted(view, url, fav)
                 onHaPage = isHaAppHost(url)
+                pageFailed = false
                 step(R.drawable.ic_mdi_web, "Loading…")
             }
 
             override fun onPageFinished(view: WebView, url: String) {
                 super.onPageFinished(view, url)
+                // A page that failed finishes too, as the browser's error page.
+                if (pageFailed) return
+                mainHandler.removeCallbacks(pageTimeout)
                 consecutiveFailures = 0
-                retryBackoffMs = INITIAL_BACKOFF_MS
-                hideRetryHint()
 
                 // Pre-warm GPU compositing layers for HA popup elements.
                 // Without this, Chromium allocates a new layer when a popup opens
@@ -850,22 +906,21 @@ class MainActivity : AppCompatActivity() {
             }
 
             // Technical WebView errors never reach the user as-is — they're
-            // absorbed into the loading screen's status text, with retries
-            // continuing silently in the background (see enterTrouble()).
+            // absorbed into the loading screen, see pageError().
             override fun onReceivedError(v: WebView, req: WebResourceRequest, err: WebResourceError) {
-                if (req.isForMainFrame) enterTrouble(err.errorCode)
+                if (req.isForMainFrame) pageError(err.errorCode)
             }
 
             override fun onReceivedSslError(v: WebView, handler: SslErrorHandler, err: SslError) {
                 handler.cancel()
-                enterTrouble(ERROR_SSL)
+                pageError(ERROR_SSL)
             }
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             webView.webViewRenderProcessClient = object : WebViewRenderProcessClient() {
                 override fun onRenderProcessUnresponsive(v: WebView, r: WebViewRenderProcess?) =
-                    enterTrouble(ERROR_RENDERER)
+                    pageError(ERROR_RENDERER)
                 override fun onRenderProcessResponsive(v: WebView, r: WebViewRenderProcess?) {}
             }
         }
@@ -1015,85 +1070,122 @@ class MainActivity : AppCompatActivity() {
     private fun pathOf(url: String): String =
         url.removePrefix(originOf(url)).ifBlank { "/" }
 
-    // ── Availability resolution & switching ──────────────────────────────────
+    // ── Finding the way in ───────────────────────────────────────────────────
+    // One try at a time, start to finish: home's own network when on Wi-Fi,
+    // else the tunnel, then the page. A try that fails says what it found and
+    // waits its turn (showTrouble()); nothing in between moves the way in. The
+    // app used to look again on every network signal and every error, the
+    // tunnel's own coming and going included, and with the house silent the
+    // loading screen swung between Local and Remote with nothing to read.
 
-    private fun resolveInitialTarget() {
+    /**
+     * Tries the house. [snap]: take the page on screen first, to find the way
+     * back over it (see freezePage()); false when one was taken on the way
+     * out already.
+     */
+    private fun attempt(snap: Boolean = true) {
+        if (attemptJob?.isActive == true || freezing) return
+        if (snap && pageShown && !loadingVisible && !isDialogShowing()) {
+            freezing = true
+            freezePage { freezing = false; attempt(snap = false) }
+            return
+        }
+        mainHandler.removeCallbacks(retryRunnable)
+        mainHandler.removeCallbacks(pageTimeout)
+        hideTrouble()
+        val f = Findings().also { findings = it }
         showLoading()
-        showSwitch(pending = true)
-        resolveJob = activityScope.launch {
-            val target = resolveTarget()
+        showSwitch()
+        attemptJob = activityScope.launch {
+            f.wifi = networkMonitor.isOnWifi()
+            if (f.wifi) {
+                step(R.drawable.ic_mdi_wifi, "Looking for home on this Wi-Fi…")
+                f.local = probeLocal()
+            }
+            val target = if (f.local == true) HaTarget.LOCAL else HaTarget.REMOTE
             currentTarget = target
             revealSwitch(target)
-            loadTarget(target)
+            statusEndpoint.text = endpointLabel()
+            refreshSettings?.invoke()
+            if (target == HaTarget.LOCAL) {
+                // Real Wi-Fi makes the tunnel pointless overhead.
+                if (vpnManager.currentState() == Tunnel.State.UP) vpnManager.down()
+                step(R.drawable.ic_mdi_home_outline, "Connecting locally…")
+                // Being home is the safest moment to renew the way out of it.
+                keepSessionWarm()
+            } else if (!connectRemote(f)) {
+                showTrouble(f)
+                return@launch
+            }
+            loadPage()
         }
     }
 
-    private suspend fun resolveTarget(): HaTarget =
-        if (networkMonitor.isOnWifi() && HaProbe.isReachable(BuildConfig.LOCAL_URL)) HaTarget.LOCAL else HaTarget.REMOTE
+    private fun loadPage() {
+        restoreArmed = true
+        mainHandler.removeCallbacks(pageTimeout)
+        mainHandler.postDelayed(pageTimeout, PAGE_TIMEOUT_MS)
+        // Same URL either way (see haUrl()) — a second origin here is what used
+        // to make HA ask to sign in again after every Wi-Fi⇄tunnel switch, since
+        // hassTokens lives in localStorage, which is scoped per-origin.
+        webView.loadUrl(haUrl())
+    }
 
-    /** Central re-evaluation entry point: periodic timer, network changes, and error retries all funnel through here. */
-    private fun checkAvailabilityAndActOn(forceReload: Boolean = false) {
-        if (resolveJob?.isActive == true) return
-        resolveJob = activityScope.launch {
-            val target = resolveTarget()
-            val current = currentTarget
-            when {
-                current == null   -> { currentTarget = target; loadTarget(target) }
-                target != current -> switchTo(target)
-                forceReload        -> retryCurrentTarget()
+    /** Home on this network: asked twice, so one slow answer is not "away". */
+    private suspend fun probeLocal(): Boolean {
+        repeat(2) { n ->
+            if (n > 0) delay(LOCAL_PROBE_GAP_MS)
+            if (HaProbe.isReachable(BuildConfig.LOCAL_URL, LOCAL_PROBE_TIMEOUT_MS)) return true
+        }
+        return false
+    }
+
+    /** Home through the tunnel, the same twice. */
+    private suspend fun probeTunnel(): Boolean {
+        repeat(2) { n ->
+            if (n > 0) delay(TUNNEL_PROBE_DELAY_MS)
+            if (HaProbe.isReachable(haUrl(), TUNNEL_PROBE_TIMEOUT_MS)) return true
+        }
+        return false
+    }
+
+    /**
+     * While a page is up: home's network within reach again, or the way in use
+     * gone. Each is asked twice before anything moves, and what moves is a
+     * whole new try, over the page as it is.
+     */
+    private fun recheck() {
+        if (loadingVisible || attemptJob?.isActive == true || recheckJob?.isActive == true) return
+        recheckJob = activityScope.launch {
+            val wifi = networkMonitor.isOnWifi()
+            val move = when (currentTarget) {
+                HaTarget.LOCAL  -> !wifi || !probeLocal()
+                HaTarget.REMOTE -> (wifi && probeLocal()) || !probeTunnel()
+                null            -> true
             }
+            if (move && !loadingVisible) attempt()
         }
     }
 
     private fun onNetworkSignal() {
         // NetworkCallback fires on a binder thread — hop back to main before touching views.
-        mainHandler.post { checkAvailabilityAndActOn() }
+        mainHandler.post {
+            mainHandler.removeCallbacks(networkSettled)
+            mainHandler.postDelayed(networkSettled, NETWORK_SETTLE_MS)
+        }
     }
 
-    private fun switchTo(target: HaTarget) {
-        currentTarget = target
-        showLoading()
-        showSwitch(pending = false)
-        revealSwitch(target)
-        // Real Wi-Fi makes the tunnel pointless overhead — drop it in the
-        // background, the LOCAL page load below doesn't wait on this.
-        if (target == HaTarget.LOCAL) activityScope.launch { vpnManager.down() }
-        loadTarget(target)
-    }
-
-    private fun retryCurrentTarget() {
-        val target = currentTarget ?: return
-        loadTarget(target)
-    }
-
-    private fun loadTarget(target: HaTarget) {
-        if (!loadingVisible) showLoading()
-        statusEndpoint.text = endpointLabel()
-        refreshSettings?.invoke()
-        restoreArmed = true
-        when (target) {
-            HaTarget.LOCAL -> {
-                // A network blip could otherwise leave connectRemote() (and its
-                // OTP dialog) running in the background while LOCAL loads.
-                connectJob?.cancel()
-                step(R.drawable.ic_mdi_home_outline, "Connecting locally…")
-                // Being home is the safest moment to renew the way out of it.
-                keepSessionWarm()
-                // Same URL as REMOTE (see haUrl()) — a second origin here is what
-                // used to make HA ask to sign in again after every Wi-Fi⇄tunnel
-                // switch, since hassTokens lives in localStorage, which is scoped
-                // per-origin.
-                webView.loadUrl(haUrl())
-            }
-            HaTarget.REMOTE -> {
-                // Already connecting — most commonly the OTP dialog sitting open
-                // waiting on the user. Don't restart the flow out from under it.
-                if (connectJob?.isActive == true) return
-                connectJob = activityScope.launch {
-                    if (connectRemote()) webView.loadUrl(haUrl())
-                    else enterTrouble(ERROR_VPN, keepStatus = true)
-                }
-            }
+    /**
+     * A network came or went. A try under way finishes as it is; a failed one
+     * goes again at once when the Wi-Fi it failed on came or went, else waits
+     * its turn; a page up is checked.
+     */
+    private fun onNetworkSettled() {
+        when {
+            attemptJob?.isActive == true -> Unit
+            troubleUp -> if (retryAt > 0L && networkMonitor.isOnWifi() != findings?.wifi) attempt()
+            loadingVisible -> Unit
+            else -> recheck()
         }
     }
 
@@ -1158,7 +1250,7 @@ class MainActivity : AppCompatActivity() {
         activeDialog = ActiveDialog(cancelable, fullScreen, onDismiss)
         // A page covers the loading screen whole, and its sky can rest meanwhile.
         // Behind a card, what is under it goes soft, as behind Bubble's pop-ups.
-        loadingSky.paused = fullScreen
+        loadingSky.paused = fullScreen || veiled
         blurBehind(!fullScreen)
 
         // Behind a card, a scrim; behind a page, the page's own colour, which is
@@ -1224,7 +1316,7 @@ class MainActivity : AppCompatActivity() {
     private fun dismissDialog() {
         val prev = activeDialog ?: return
         activeDialog = null
-        loadingSky.paused = false
+        loadingSky.paused = veiled
         blurBehind(false)
         dialogScrim.animate().alpha(0f).setDuration(180).withEndAction {
             dialogScrim.visibility = View.GONE
@@ -1241,8 +1333,12 @@ class MainActivity : AppCompatActivity() {
     // bring the tunnel up, then the caller loads LOCAL_URL through it — same
     // page, same origin, same auth as standing on the home Wi-Fi.
 
-    private suspend fun connectRemote(): Boolean {
-        if (vpnManager.currentState() == Tunnel.State.UP) return true
+    private suspend fun connectRemote(f: Findings): Boolean {
+        if (vpnManager.currentState() == Tunnel.State.UP) {
+            // Up already: worth something only if the house answers through it.
+            if (probeTunnel()) { f.server = true; f.house = true; return true }
+            vpnManager.down()
+        }
 
         setSwitchStage(SwitchStage.KEY)
         step(R.drawable.ic_mdi_key_variant, "Checking access…")
@@ -1251,27 +1347,27 @@ class MainActivity : AppCompatActivity() {
         // unreachable cv-auth leaves us holding what we already had, and what we
         // already had is enough to try the tunnel with.
         var access = ensureSession()
-        if (access == Access.NEEDS_CODE && !signInWithCode()) return false
+        if (access == Access.NEEDS_CODE && !signInWithCode(f)) return false
 
         setSwitchStage(SwitchStage.LOCK_CLOSED)
         step(R.drawable.ic_mdi_shield_key_outline, "Requesting VPN permission…")
         if (!ensureVpnPermission()) {
-            step(R.drawable.ic_mdi_cancel, "VPN permission denied")
+            f.signIn = "VPN permission denied"
             return false
         }
 
-        if (!raiseTunnel()) {
+        if (!raiseTunnel(f)) {
             // The config we hold no longer carries traffic. Nearly always that
             // means it has moved on without us — a hub that forgot the peer, a
             // house on a new address — and a renewal is exactly what fetches the
             // replacement. Worth one forced try before anybody is sent to the bot
-            // for a code they probably do not need.
+            // for a code they probably do not need. Not when the server answered
+            // the tunnel: then the config is fine, and it is the house that is
+            // quiet.
+            if (f.server == true) return false
             access = ensureSession(force = true)
-            if (access == Access.NEEDS_CODE && !signInWithCode()) return false
-            if (access == Access.OFFLINE || !raiseTunnel()) {
-                step(R.drawable.ic_mdi_lan_disconnect, "Home is offline, retrying…")
-                return false
-            }
+            if (access == Access.NEEDS_CODE && !signInWithCode(f)) return false
+            if (access == Access.OFFLINE || !raiseTunnel(f)) return false
         }
 
         setSwitchStage(SwitchStage.LOCK_OPEN)
@@ -1329,10 +1425,10 @@ class MainActivity : AppCompatActivity() {
      * Six digits from the bot, exchanged for a peer. Only ever reached when there
      * is nothing left to renew — the whole flow above exists to keep it that way.
      */
-    private suspend fun signInWithCode(): Boolean {
+    private suspend fun signInWithCode(f: Findings): Boolean {
         val code = awaitOtpCode()
         if (code == null) {
-            step(R.drawable.ic_mdi_close_circle_outline, "Sign-in cancelled")
+            f.signIn = "Sign-in cancelled"
             return false
         }
         step(R.drawable.ic_mdi_dialpad, "Verifying code…")
@@ -1340,7 +1436,7 @@ class MainActivity : AppCompatActivity() {
         return when (val result = CvAuthApi.bootstrap(code, pubkey)) {
             is CvAuthApi.Result.Ok -> { applyVpnConfig(result.config); true }
             is CvAuthApi.Result.Failed -> {
-                step(R.drawable.ic_mdi_cancel, "Sign-in failed: ${result.message}")
+                f.signIn = "Sign-in failed"
                 toast(result.message)
                 false
             }
@@ -1354,14 +1450,25 @@ class MainActivity : AppCompatActivity() {
      * looks exactly like a working tunnel from this side until something is asked
      * to cross it, and the app would sit there reloading a page that could never
      * arrive.
+     *
+     * Which side was silent goes into [f]: a handshake means the server answered,
+     * and a house that says nothing after one is the house.
      */
-    private suspend fun raiseTunnel(): Boolean {
+    private suspend fun raiseTunnel(f: Findings): Boolean {
         step(R.drawable.ic_mdi_lock_outline, "Establishing tunnel…")
-        if (vpnManager.up(secureStore).isFailure) return false
+        // Handshake times come in whole seconds.
+        val since = System.currentTimeMillis() - 2_000L
+        if (vpnManager.up(secureStore).isFailure) { f.server = false; return false }
         repeat(TUNNEL_PROBE_ATTEMPTS) { attempt ->
             if (attempt > 0) delay(TUNNEL_PROBE_DELAY_MS)
-            if (HaProbe.isReachable(haUrl(), TUNNEL_PROBE_TIMEOUT_MS)) return true
+            if (HaProbe.isReachable(haUrl(), TUNNEL_PROBE_TIMEOUT_MS)) {
+                f.server = true
+                f.house = true
+                return true
+            }
         }
+        f.server = vpnManager.handshookSince(since)
+        f.house = false
         vpnManager.down()
         return false
     }
@@ -1694,7 +1801,7 @@ class MainActivity : AppCompatActivity() {
             secureStore.forget()
             toast(getString(R.string.settings_remote_forgotten))
             refreshSettings?.invoke()
-            if (currentTarget == HaTarget.REMOTE) checkAvailabilityAndActOn(forceReload = true)
+            if (currentTarget == HaTarget.REMOTE) attempt()
         }
     }
 
@@ -1953,31 +2060,88 @@ class MainActivity : AppCompatActivity() {
     private fun showLoading() {
         // A fresh attempt starts a fresh log; a switch or a retry while the
         // screen is already up is the same attempt continuing.
-        if (!loadingVisible) {
-            clearLog()
-            loadingGreeting.text = greeting()
-        }
+        if (loadingVisible) return
+        clearLog()
+        loadingGreeting.text = greeting()
         loadingVisible = true
-        // Keep WebView VISIBLE at alpha=0 — INVISIBLE releases the GPU surface,
-        // which causes a black flash when the surface is recreated on next show.
-        webView.alpha = 0f
         if (webView.visibility != View.VISIBLE) webView.visibility = View.VISIBLE
+        loadingView.animate().cancel()
         loadingView.visibility = View.VISIBLE
-        loadingView.alpha      = 1f
-        if (breathingAnimator?.isRunning != true) startBreathing()
+        val over = frozen?.takeIf { pageShown }
+        dress(over)
+        if (over != null) {
+            // The page goes soft where it stands, then the words come over it.
+            loadingView.alpha = 0f
+            loadingView.animate().alpha(1f).setDuration(220).withEndAction {
+                if (loadingVisible) webView.alpha = 0f
+            }.start()
+        } else {
+            // Keep WebView VISIBLE at alpha=0 — INVISIBLE releases the GPU surface,
+            // which causes a black flash when the surface is recreated on next show.
+            webView.alpha = 0f
+            loadingView.alpha = 1f
+            if (breathingAnimator?.isRunning != true) startBreathing()
+        }
     }
 
     private fun hideLoading() {
         if (!loadingVisible) return   // guard: prevent duplicate calls resetting alpha
         loadingVisible = false
+        pageShown = true
         breathingAnimator?.cancel()
         stopRoutePulse()
-        hideRetryHint()
+        hideTrouble()
+        mainHandler.removeCallbacks(pageTimeout)
+        frozen = null
+        loadingView.animate().cancel()
         loadingView.animate().alpha(0f).setDuration(350).withEndAction {
             loadingView.visibility = View.GONE
             loadingView.alpha = 1f
+            dress(null)
         }.start()
         webView.animate().alpha(1f).setDuration(350).start()
+    }
+
+    /**
+     * Dresses the loading screen. Over [page] (the page that was up, see
+     * freezePage()): that page softened and dimmed, with the words alone on
+     * it, so finding the way back reads as a pause, not a different screen.
+     * Without one: the sky, the coyote and the greeting, as on a cold start.
+     */
+    private fun dress(page: Bitmap?) {
+        val over = page != null
+        loadingPage.setImageBitmap(page)
+        loadingPage.visibility = if (over) View.VISIBLE else View.GONE
+        loadingDim.visibility = loadingPage.visibility
+        loadingDim.setBackgroundColor(Look.withAlpha(Look.current.bg, 0.55f))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val r = FROZEN_BLUR_DP * resources.displayMetrics.density
+            loadingPage.setRenderEffect(if (over) RenderEffect.createBlurEffect(r, r, Shader.TileMode.CLAMP) else null)
+        }
+        loadingSky.visibility = if (over) View.INVISIBLE else View.VISIBLE
+        loadingSky.paused = over || activeDialog?.fullScreen == true
+        val brand = if (over) View.GONE else View.VISIBLE
+        for (v in listOf(loadingLogo, loadingTitle, loadingGreeting)) v.visibility = brand
+        loadingBrand.visibility = brand
+        loadingVersion.visibility = brand
+    }
+
+    /**
+     * The page on screen, taken small (it is shown blurred anyway), for the
+     * loading screen to stand on. [then] runs either way, once.
+     */
+    private fun freezePage(then: () -> Unit) {
+        val w = webView.width / FROZEN_SCALE
+        val h = webView.height / FROZEN_SCALE
+        if (!pageShown || w <= 0 || h <= 0 || !webView.isAttachedToWindow || fullView != null) { then(); return }
+        val at = IntArray(2).also { webView.getLocationInWindow(it) }
+        val shot = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        runCatching {
+            PixelCopy.request(window, Rect(at[0], at[1], at[0] + webView.width, at[1] + webView.height), shot, { result ->
+                if (result == PixelCopy.SUCCESS) frozen = shot
+                then()
+            }, mainHandler)
+        }.onFailure { then() }
     }
 
     // ── The connect log ───────────────────────────────────────────────────────
@@ -2111,11 +2275,10 @@ class MainActivity : AppCompatActivity() {
     private var routeRemoteIcon = R.drawable.ic_mdi_cloud_outline
     private var routePulse: ObjectAnimator? = null
 
-    private fun showSwitch(pending: Boolean) {
+    private fun showSwitch() {
         routeRemoteIcon = R.drawable.ic_mdi_cloud_outline
         drawRoute(null)
-        if (pending) step(R.drawable.ic_mdi_compass_outline, "Finding connection…")
-        else step(R.drawable.ic_mdi_swap_horizontal, "Switching…")
+        step(R.drawable.ic_mdi_compass_outline, "Finding connection…")
     }
 
     /** Key → closed lock → open lock, driven by connectRemote()'s own stages — see there. */
@@ -2138,18 +2301,20 @@ class MainActivity : AppCompatActivity() {
         else step(R.drawable.ic_mdi_cloud_outline, "Remote connection")
     }
 
-    private fun drawRoute(chosen: HaTarget?) {
+    /** [pending]: still looking, both breathe; not, and none chosen: neither way worked. */
+    private fun drawRoute(chosen: HaTarget?, pending: Boolean = true) {
         routeChosen = chosen
         val look = Look.current
+        val looking = chosen == null && pending
         fun pill(view: TextView, on: Boolean, icon: Int) {
             view.tag = if (on) "sub-on" else "sub"
             view.setCompoundDrawablesRelativeWithIntrinsicBounds(icon, 0, 0, 0)
             Bubble.paint(view, look)
-            view.animate().alpha(if (chosen == null || on) 1f else 0.4f).setDuration(240).start()
+            view.animate().alpha(if (looking || on) 1f else 0.4f).setDuration(240).start()
         }
         pill(routeLocal, chosen == HaTarget.LOCAL, R.drawable.ic_mdi_home_outline)
         pill(routeRemote, chosen == HaTarget.REMOTE, routeRemoteIcon)
-        if (chosen == null) startRoutePulse() else stopRoutePulse()
+        if (looking) startRoutePulse() else stopRoutePulse()
     }
 
     private fun startRoutePulse() {
@@ -2179,51 +2344,152 @@ class MainActivity : AppCompatActivity() {
             .setInterpolator(OvershootInterpolator(3f)).start()
     }
 
-    // ── Connection trouble (replaces any browser-shown error) ────────────────
-    // A couple of blips are retried silently (e.g. a DNS hiccup right after a
-    // network handoff). Only once failures persist do we surface the retry hint —
-    // the loading screen itself never changes into a scary "error screen".
+    // ── A try that failed (replaces any browser-shown error) ─────────────────
+    // The status card says what stopped it, the lines under it what each way
+    // in found, and the next try is counted down with a button for now.
+    // Nothing else moves meanwhile. A page that failed once is tried again
+    // quietly first (a handover blip); what needs the person (the sign-in
+    // code, the VPN permission) waits for the button instead of the clock.
 
-    private fun enterTrouble(code: Int, keepStatus: Boolean = false) {
+    /** What one try found, for the lines under a failed one. */
+    private class Findings {
+        var wifi = false
+        var local: Boolean? = null    // home answered on this Wi-Fi; null: not asked
+        var server: Boolean? = null   // the tunnel reached the server (a handshake)
+        var house: Boolean? = null    // home answered through the tunnel
+        var signIn: String? = null    // why the tunnel was never tried, when the person must act
+        var page: Int? = null         // the page itself failed, with this WebView error
+    }
+
+    private enum class Seen { OK, FAILED, SKIPPED }
+
+    private fun pageError(code: Int) {
+        pageFailed = true
+        mainHandler.removeCallbacks(frontendCheck)
+        mainHandler.removeCallbacks(pageTimeout)
+        val f = findings ?: Findings().also { findings = it }
+        f.page = code
+        if (!loadingVisible) showLoading()
+        if (++consecutiveFailures == 1) {
+            step(R.drawable.ic_mdi_refresh, "Trying again…")
+            mainHandler.removeCallbacks(retryRunnable)
+            mainHandler.postDelayed(retryRunnable, SILENT_RETRY_DELAY_MS)
+        } else showTrouble(f)
+    }
+
+    private fun showTrouble(f: Findings) {
+        troubleUp = true
         consecutiveFailures++
         if (!loadingVisible) showLoading()
-        // connectRemote() already leaves a specific status behind (which step
-        // failed, or that the user cancelled) — the generic fallback would
-        // only make VPN failures less informative than every other error path.
-        if (!keepStatus) step(troubleIcon(code), troubleMessage(code))
-
-        val persistent = consecutiveFailures > SILENT_RETRY_ATTEMPTS
-        if (persistent) showRetryHint() else hideRetryHint()
-
-        val delay = if (persistent) {
-            val d = retryBackoffMs
-            retryBackoffMs = (retryBackoffMs * 17 / 10).coerceAtMost(MAX_BACKOFF_MS)
-            d
-        } else SILENT_RETRY_DELAY_MS
-        mainHandler.removeCallbacks(errorRetryRunnable)
-        mainHandler.postDelayed(errorRetryRunnable, delay)
+        drawRoute(null, pending = false)
+        val (icon, headline) = headline(f)
+        statusIcon.setImageResource(icon)
+        statusName.text = headline
+        statusEndpoint.text = endpointLabel()
+        // The next try's first step starts the log afresh rather than logging this.
+        stepText = null
+        statusSpinner.visibility = View.GONE
+        loadingLog.animate().alpha(0f).setDuration(200).start()
+        troubleChecks.removeAllViews()
+        checks(f).forEach { (seen, text) -> troubleChecks.addView(checkLine(seen, text)) }
+        Bubble.paint(troubleBox, Look.current)
+        troubleBox.alpha = 0f
+        troubleBox.visibility = View.VISIBLE
+        troubleBox.animate().alpha(1f).setDuration(260).start()
+        retryAt = if (f.signIn != null) 0L else System.currentTimeMillis() + RETRY_AFTER_MS
+        mainHandler.removeCallbacks(countdown)
+        tick()
     }
 
-    private fun troubleIcon(code: Int): Int = when (code) {
-        WebViewClient.ERROR_FAILED_SSL_HANDSHAKE, ERROR_SSL -> R.drawable.ic_mdi_alert_outline
-        WebViewClient.ERROR_AUTHENTICATION                  -> R.drawable.ic_mdi_account_lock_outline
-        else                                                -> R.drawable.ic_mdi_refresh
+    /** The next try, counted down a second at a time; at zero, it goes. */
+    private fun tick() {
+        if (!troubleUp) return
+        if (retryAt == 0L) { troubleNext.text = "Connects again when you try"; return }
+        val left = ((retryAt - System.currentTimeMillis() + 999) / 1000).toInt()
+        if (left <= 0) { attempt(); return }
+        troubleNext.text = "Trying again in $left s"
+        mainHandler.postDelayed(countdown, 1_000L)
     }
 
-    private fun troubleMessage(code: Int): String = when (code) {
-        WebViewClient.ERROR_FAILED_SSL_HANDSHAKE, ERROR_SSL -> "Security warning — check your connection"
-        WebViewClient.ERROR_AUTHENTICATION                  -> "Sign-in required"
-        else                                                -> "Reconnecting…"
+    private fun hideTrouble() {
+        if (!troubleUp) return
+        troubleUp = false
+        retryAt = 0L
+        mainHandler.removeCallbacks(countdown)
+        troubleBox.visibility = View.GONE
+        statusSpinner.visibility = View.VISIBLE
+        clearLog()
+        loadingLog.animate().cancel()
+        loadingLog.alpha = 1f
     }
 
-    private fun showRetryHint() {
-        loadingRetryHint.isClickable = true
-        loadingRetryHint.animate().alpha(1f).setDuration(250).start()
+    /** What stopped the try, in a few words: the status card's line. */
+    private fun headline(f: Findings): Pair<Int, String> {
+        val page = f.page
+        return when {
+            f.signIn != null -> R.drawable.ic_mdi_account_lock_outline to f.signIn!!
+            page == ERROR_SSL || page == WebViewClient.ERROR_FAILED_SSL_HANDSHAKE ->
+                R.drawable.ic_mdi_alert_outline to "Security warning on the way home"
+            page != null -> R.drawable.ic_mdi_home_assistant to "Home Assistant didn't load"
+            f.server == true -> R.drawable.ic_mdi_lan_disconnect to "Home isn't answering"
+            else -> R.drawable.ic_mdi_cloud_outline to "Can't reach the VPN server"
+        }
     }
 
-    private fun hideRetryHint() {
-        loadingRetryHint.isClickable = false
-        loadingRetryHint.animate().alpha(0f).setDuration(200).start()
+    /** Each way in and how far it got, in the order they were tried. */
+    private fun checks(f: Findings): List<Pair<Seen, String>> = buildList {
+        add(when (f.local) {
+            true  -> Seen.OK to "Home Wi-Fi: Home Assistant answered"
+            false -> Seen.FAILED to "Home Wi-Fi: no answer from Home Assistant"
+            null  -> Seen.SKIPPED to "Home Wi-Fi: not on Wi-Fi"
+        })
+        if (f.local != true) {
+            add(when {
+                f.signIn != null  -> Seen.FAILED to "VPN: not connected"
+                f.server == true  -> Seen.OK to "VPN: connected"
+                f.server == false -> Seen.FAILED to "VPN: the server didn't answer"
+                else              -> Seen.SKIPPED to "VPN: not tried"
+            })
+            if (f.server == true) add(
+                if (f.house == true) Seen.OK to "Through the VPN: Home Assistant answered"
+                else Seen.FAILED to "Through the VPN: no answer from Home Assistant")
+        }
+        f.page?.let { add(Seen.FAILED to "The page: ${pageProblem(it)}") }
+    }
+
+    private fun pageProblem(code: Int): String = when (code) {
+        WebViewClient.ERROR_TIMEOUT                         -> "timed out"
+        WebViewClient.ERROR_HOST_LOOKUP                     -> "address not found"
+        WebViewClient.ERROR_CONNECT                         -> "connection refused"
+        WebViewClient.ERROR_FAILED_SSL_HANDSHAKE, ERROR_SSL -> "certificate not trusted"
+        WebViewClient.ERROR_AUTHENTICATION                  -> "sign-in required"
+        ERROR_RENDERER                                      -> "stopped responding"
+        else                                                -> "error $code"
+    }
+
+    /** One line of what was found: failures read clearest, what was skipped faintest. */
+    private fun checkLine(seen: Seen, text: String): TextView {
+        val dp = resources.displayMetrics.density
+        return TextView(this).apply {
+            this.text = text
+            tag = when (seen) { Seen.OK -> "muted"; Seen.FAILED -> "text"; Seen.SKIPPED -> "faint" }
+            textSize = 13f
+            compoundDrawablePadding = (8 * dp).toInt()
+            val icon = when (seen) {
+                Seen.OK      -> R.drawable.ic_mdi_check_circle_outline
+                Seen.FAILED  -> R.drawable.ic_mdi_close_circle_outline
+                Seen.SKIPPED -> R.drawable.ic_mdi_minus_circle_outline
+            }
+            ContextCompat.getDrawable(context, icon)?.mutate()?.let {
+                it.setBounds(0, 0, (16 * dp).toInt(), (16 * dp).toInt())
+                setCompoundDrawablesRelative(it, null, null, null)
+            }
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ).apply { topMargin = (6 * dp).toInt() }
+        }
     }
 
     // ── Handing over to Home Assistant ───────────────────────────────────────

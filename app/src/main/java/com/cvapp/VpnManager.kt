@@ -37,6 +37,16 @@ class VpnManager(context: Context) {
 
     fun currentState(): Tunnel.State = backend.getState(tunnel)
 
+    /**
+     * Whether the server answered the tunnel since [sinceMs]: a WireGuard
+     * handshake. With one, the way to the house is open as far as the server,
+     * and a house that still says nothing is the house itself.
+     */
+    fun handshookSince(sinceMs: Long): Boolean = runCatching {
+        val stats = backend.getStatistics(tunnel)
+        stats.peers().any { (stats.peer(it)?.latestHandshakeEpochMillis() ?: 0L) >= sinceMs }
+    }.getOrDefault(false)
+
     /** Generates this device's WireGuard identity once and keeps it forever — see [SecureStore]. */
     fun ensureKeyPair(store: SecureStore): String {
         store.wgPrivateKey?.let { return KeyPair(com.wireguard.crypto.Key.fromBase64(it)).publicKey.toBase64() }
