@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
 import android.net.Uri
 import androidx.core.app.NotificationCompat
 import org.json.JSONObject
@@ -14,7 +15,8 @@ import org.json.JSONObject
  * CV Chat's notifications, from what the house sealed for this phone.
  *
  * The house picks the channel from the message's first line, the house style
- * `<emoji> *Section — View*`; the person sets each channel's sound in Android.
+ * `<emoji> *Section — View*`. Each rings with the app's own sound until the
+ * person picks another for it in Android.
  * A message that answers something the person just did comes on the quiet
  * channel. Repeats of one panel replace each other (question 89), and a read on
  * another device clears them here (question 90).
@@ -44,11 +46,27 @@ object Notifier {
         Triple("connection", R.string.channel_connection, NotificationManager.IMPORTANCE_MIN),
     )
 
+    // A channel keeps the sound it was made with, whatever the app says later.
+    // So the channels made before the app had a sound of its own (2.1) give way
+    // to new ones under new ids; the house names them as it always did. The
+    // listening notice's channel makes no sound and stays as it was.
+    private const val SOUNDED = "-s1"
+
+    private fun channelId(name: String) = if (name == "connection") name else name + SOUNDED
+
     fun ensureChannels(ctx: Context) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannels(CHANNELS.map { (id, name, importance) ->
-            NotificationChannel(id, ctx.getString(name), importance)
+        val sound = Uri.parse("android.resource://${ctx.packageName}/${R.raw.notify}")
+        val audio = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
+        nm.createNotificationChannels(CHANNELS.map { (name, label, importance) ->
+            NotificationChannel(channelId(name), ctx.getString(label), importance).apply {
+                if (name != "connection") setSound(sound, audio)
+            }
         })
+        CHANNELS.forEach { (name, _, _) -> if (name != "connection") nm.deleteNotificationChannel(name) }
     }
 
     /** The listening service's own notice: required by Android, kept as quiet as it allows. */
@@ -84,7 +102,7 @@ object Notifier {
         // A channel this build does not know (a newer house) would drop the
         // notification on the floor: Android posts nothing to a missing channel.
         val channel = p.optString("ch").takeIf { ch -> CHANNELS.any { it.first == ch } } ?: "household"
-        val builder = NotificationCompat.Builder(ctx, channel)
+        val builder = NotificationCompat.Builder(ctx, channelId(channel))
             .setSmallIcon(R.drawable.ic_mdi_message_text_outline)
             .setContentTitle(p.optString("ti"))
             .setContentText(first)
