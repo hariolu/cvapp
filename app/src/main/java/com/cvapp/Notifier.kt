@@ -54,6 +54,13 @@ object Notifier {
 
     private fun channelId(name: String) = if (name == "connection") name else name + SOUNDED
 
+    // CV's coyote in the status bar, and in the shade on a circle of the
+    // person's own colour: the look the house last gave this phone, Amber
+    // before it has given one.
+    private fun cv(builder: NotificationCompat.Builder, ctx: Context) = builder
+        .setSmallIcon(R.drawable.ic_stat_cv)
+        .setColor((Look.current.takeIf { it.fromHouse } ?: Look.load(ctx)).accent)
+
     fun ensureChannels(ctx: Context) {
         val nm = ctx.getSystemService(NotificationManager::class.java)
         val sound = Uri.parse("android.resource://${ctx.packageName}/${R.raw.notify}")
@@ -71,8 +78,7 @@ object Notifier {
 
     /** The listening service's own notice: required by Android, kept as quiet as it allows. */
     fun linkNotice(ctx: Context): Notification =
-        NotificationCompat.Builder(ctx, "connection")
-            .setSmallIcon(R.drawable.ic_mdi_message_text_outline)
+        cv(NotificationCompat.Builder(ctx, "connection"), ctx)
             .setContentTitle(ctx.getString(R.string.push_listening))
             .setContentIntent(openChat(ctx, "", 0))
             .setOngoing(true)
@@ -102,8 +108,7 @@ object Notifier {
         // A channel this build does not know (a newer house) would drop the
         // notification on the floor: Android posts nothing to a missing channel.
         val channel = p.optString("ch").takeIf { ch -> CHANNELS.any { it.first == ch } } ?: "household"
-        val builder = NotificationCompat.Builder(ctx, channelId(channel))
-            .setSmallIcon(R.drawable.ic_mdi_message_text_outline)
+        val builder = cv(NotificationCompat.Builder(ctx, channelId(channel)), ctx)
             .setContentTitle(p.optString("ti"))
             .setContentText(first)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))

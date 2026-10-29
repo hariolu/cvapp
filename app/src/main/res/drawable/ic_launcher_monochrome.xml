@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The launcher icon for Android 13's themed icons: the status bar's coyote,
+  tinted by the system. Held in the middle of the 108dp canvas at 44% of it
+  (28% a side), so the waves in its top corners stay inside every mask shape.
+-->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_stat_cv"
+    android:inset="28%" />

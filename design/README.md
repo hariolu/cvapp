@@ -75,18 +75,29 @@ Like the artwork, the results are committed; these are the notes for rebuilding.
 |---|---|---|
 | `app/src/main/res/font/inter_*.ttf`, `jetbrains_mono.ttf` | `Inter-Variable.woff2` and `JetBrainsMono-Variable.woff2` in cv-core's `component/legacy/www/` | [`fonts.py`](fonts.py) |
 | `app/src/main/res/drawable/ic_mdi_*.xml` | Material Design Icons, the `@mdi/js` package (7.4.47) | [`icons.py`](icons.py) |
+| `app/src/main/res/drawable/ic_stat_cv.xml` | CV's coyote drawn as geometry (Rio's pick, 2026-10-28) | [`notify_icon.py`](notify_icon.py) |
 
 ```bash
 python3 design/fonts.py <Inter-Variable.woff2> <JetBrainsMono-Variable.woff2>   # fontTools + brotli
 
 npm pack @mdi/js && tar xzf mdi-js-*.tgz                                       # in a scratch folder
 python3 design/icons.py package/mdi.js
+
+python3 design/notify_icon.py                                                  # shapely
 ```
 
 `fonts.py` turns each weight the app uses into a static TTF (Android reads
 neither WOFF2 nor, before API 31, a weight out of a variable font from XML) and
 keeps only Latin, punctuation and arrows. `icons.py` takes the icons listed at its
 top; an icon a layout starts using is added there first.
+
+`ic_stat_cv` is the notifications' small icon: Android shows it in the status
+bar as a cut-out in one colour, and in the shade on a circle of the person's
+accent (`Notifier`). `notify_icon.py` draws the mascot's head, hair, goggles and
+ear waves as shapes on the 24dp grid and writes them as one white path whose
+holes do not depend on the fill rule. The launcher's themed icon
+(`ic_launcher_monochrome`, Android 13) is the same drawable, inset to the
+adaptive icon's safe zone.
 
 The licences travel with them: Inter and JetBrains Mono are under the SIL Open
 Font License, kept in each font's own name table and in
